@@ -210,6 +210,24 @@ button.primary {
   font-size: 0.85rem;
 }
 
+.autoplay {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid #d9e2ec;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+}
+
+.autoplay__countdown {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #1565c0;
+}
+
 .presenter__secondary {
   display: flex;
   justify-content: center;

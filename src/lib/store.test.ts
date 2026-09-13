@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { createStoryStore } from './store';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createStoryStore, AUTOPLAY_INTERVAL_MS, AUTOPLAY_TICKS_PER_PAGE } from './store';
 import {
   SCHEMA_VERSION,
   STORAGE_KEY,
@@ -331,5 +331,223 @@ describe('store：每次操作先写快照再反馈', () => {
     const revived = createStoryStore(storage);
     expect(revived.state.view).toBe('editor');
     expect(revived.state.draftPages.map((p) => p.title)).toEqual(['第三页', '第一页', '第二页']);
+  });
+});
+
+/** 录入 n 页合法故事并启动演示 */
+function buildStartedStoreWithPages(storage: StorageLike, count: number) {
+  const store = createStoryStore(storage);
+  for (let i = 0; i < count; i += 1) store.addPage();
+  store.state.draftPages.forEach((page, index) => {
+    store.updatePage(page.id, { title: `第${index + 1}页`, description: `第${index + 1}页说明` });
+  });
+  expect(store.startPresentation()).toBe(true);
+  return store;
+}
+
+const EIGHT_SECONDS = AUTOPLAY_INTERVAL_MS * AUTOPLAY_TICKS_PER_PAGE;
+
+describe('store：自动播放（可控时钟）', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('启动演示默认手动模式，不开启任何计时器', () => {
+    const storage = createMemoryStorage();
+    const store = buildStartedStore(storage);
+    expect(store.state.session?.playMode).toBe('manual');
+    expect(store.state.autoRemainingSeconds).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(60_000);
+    expect(store.state.session?.pageIndex).toBe(0);
+  });
+
+  it('播放模式随快照保存；重复设为相同模式不产生多余写入', () => {
+    const storage = createMemoryStorage();
+    const store = buildStartedStore(storage);
+    expect(readRaw(storage).session?.playMode).toBe('manual');
+
+    expect(store.setPlayMode('auto')).toBe(true);
+    expect(readRaw(storage).session?.playMode).toBe('auto');
+    const savedAt = store.state.savedAt;
+    expect(store.setPlayMode('auto')).toBe(true);
+    expect(store.state.savedAt).toBe(savedAt);
+  });
+
+  it('每 8 秒只推进一次：不足八秒不动，整八秒提交下一页', () => {
+    const storage = createMemoryStorage();
+    const store = buildStartedStore(storage); // 两页故事
+    expect(store.setPlayMode('auto')).toBe(true);
+    expect(store.state.autoRemainingSeconds).toBe(8);
+    expect(vi.getTimerCount()).toBe(1);
+
+    // 剩余秒数每秒递减；不足八秒不翻页
+    vi.advanceTimersByTime(7_999);
+    expect(store.state.session?.pageIndex).toBe(0);
+    expect(store.state.autoRemainingSeconds).toBe(1);
+
+    // 整八秒提交下一页；两页故事到达末页后计时器停止
+    vi.advanceTimersByTime(1);
+    expect(store.state.session?.pageIndex).toBe(1);
+    expect(store.state.autoRemainingSeconds).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(readRaw(storage).session?.pageIndex).toBe(1);
+
+    // 末页只是停止自动推进，等待现有“完成”操作，绝不自行完成
+    vi.advanceTimersByTime(30_000);
+    expect(store.state.session?.pageIndex).toBe(1);
+    expect(store.state.session?.status).toBe('presenting');
+    expect(store.state.session?.completedAt).toBeNull();
+  });
+
+  it('多页故事连续前进：每次翻页都以新的完整八秒周期取代旧计时器', () => {
+    const storage = createMemoryStorage();
+    const store = buildStartedStoreWithPages(storage, 3);
+    store.setPlayMode('auto');
+
+    vi.advanceTimersByTime(EIGHT_SECONDS);
+    expect(store.state.session?.pageIndex).toBe(1);
+    expect(store.state.autoRemainingSeconds).toBe(8);
+    expect(vi.getTimerCount()).toBe(1); // 旧计时器已取消、新周期已建立
+
+    vi.advanceTimersByTime(EIGHT_SECONDS);
+    expect(store.state.session?.pageIndex).toBe(2);
+    expect(store.state.autoRemainingSeconds).toBe(0);
+    expect(vi.getTimerCount()).toBe(0); // 末页停止
+    expect(store.state.session?.status).toBe('presenting');
+  });
+
+  it('手动前后翻页会从当前页重新计时（旧周期不继续推进）', () => {
+    const storage = createMemoryStorage();
+    const store = buildStartedStoreWithPages(storage, 3);
+    store.setPlayMode('auto');
+    vi.advanceTimersByTime(5_000); // 已走 5 秒，剩 3 秒
+    expect(store.state.autoRemainingSeconds).toBe(3);
+
+    expect(store.nextPage()).toBe(true); // 手动提前翻到第二页
+    expect(store.state.session?.pageIndex).toBe(1);
+    expect(store.state.autoRemainingSeconds).toBe(8); // 重新开始完整八秒
+    vi.advanceTimersByTime(7_999);
+    expect(store.state.session?.pageIndex).toBe(1);
+    vi.advanceTimersByTime(1);
+    expect(store.state.session?.pageIndex).toBe(2);
+
+    // 向后翻页同样重置计时
+    expect(store.prevPage()).toBe(true);
+    expect(store.state.session?.pageIndex).toBe(1);
+    expect(store.state.autoRemainingSeconds).toBe(8);
+    vi.advanceTimersByTime(EIGHT_SECONDS);
+    expect(store.state.session?.pageIndex).toBe(2);
+  });
+
+  it('关闭自动播放立即取消计时，之后不再自动翻页', () => {
+    const storage = createMemoryStorage();
+    const store = buildStartedStoreWithPages(storage, 3);
+    store.setPlayMode('auto');
+    vi.advanceTimersByTime(5_000);
+
+    expect(store.setPlayMode('manual')).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(store.state.autoRemainingSeconds).toBe(0);
+    expect(readRaw(storage).session?.playMode).toBe('manual');
+    vi.advanceTimersByTime(30_000);
+    expect(store.state.session?.pageIndex).toBe(0);
+  });
+
+  it('刷新自动播放中的会话：恢复自动模式并从完整八秒重新计时', () => {
+    const storage = createMemoryStorage();
+    const store = buildStartedStoreWithPages(storage, 3);
+    store.setPlayMode('auto');
+    vi.advanceTimersByTime(5_000); // 仅剩 3 秒时“刷新”
+    expect(store.state.autoRemainingSeconds).toBe(3);
+    store.dispose();
+
+    const revived = createStoryStore(storage);
+    expect(revived.state.session?.playMode).toBe('auto');
+    expect(revived.state.autoRemainingSeconds).toBe(8); // 从完整八秒重新计时
+    expect(vi.getTimerCount()).toBe(1);
+    // 若沿用刷新前的剩余 3 秒，此处早已翻页；重新计时后第七秒仍在第一页
+    vi.advanceTimersByTime(7_999);
+    expect(revived.state.session?.pageIndex).toBe(0);
+    vi.advanceTimersByTime(1);
+    expect(revived.state.session?.pageIndex).toBe(1);
+  });
+
+  it('缺少 playMode 字段的旧快照按手动模式恢复，不自动翻页', () => {
+    const storage = createMemoryStorage();
+    buildStartedStore(storage);
+    const raw = JSON.parse(storage.getItem(STORAGE_KEY)!);
+    delete raw.session.playMode;
+    storage.setItem(STORAGE_KEY, JSON.stringify(raw));
+
+    const revived = createStoryStore(storage);
+    expect(revived.state.session?.playMode).toBe('manual');
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(30_000);
+    expect(revived.state.session?.pageIndex).toBe(0);
+  });
+
+  it('定时翻页写入失败：停在原页、关闭自动播放并继续显示存储错误', () => {
+    const memory = createMemoryStorage();
+    let failWrites = false;
+    const flaky: StorageLike = {
+      getItem: (key) => memory.getItem(key),
+      setItem: (key, value) => {
+        if (failWrites) throw new Error('QuotaExceededError');
+        memory.setItem(key, value);
+      },
+      removeItem: (key) => memory.removeItem(key),
+    };
+    const store = buildStartedStoreWithPages(flaky, 3);
+    store.setPlayMode('auto');
+    expect(store.state.saveError).toBeNull();
+
+    failWrites = true; // 存储在计时到点时不可用
+    vi.advanceTimersByTime(EIGHT_SECONDS);
+
+    expect(store.state.session?.pageIndex).toBe(0); // 画面停在原页
+    expect(store.state.session?.playMode).toBe('manual'); // 自动播放已关闭
+    expect(store.state.autoRemainingSeconds).toBe(0);
+    expect(vi.getTimerCount()).toBe(0); // 旧计时器已清理，不再重复尝试推进
+    expect(store.state.saveError).toBeTruthy(); // 继续显示现有存储错误提示
+
+    vi.advanceTimersByTime(30_000);
+    expect(store.state.session?.pageIndex).toBe(0);
+  });
+
+  it('重新开始、回到编辑、组件卸载都会取消旧计时器', () => {
+    const storage = createMemoryStorage();
+    const store = buildStartedStore(storage);
+    store.setPlayMode('auto');
+    vi.advanceTimersByTime(EIGHT_SECONDS); // 到末页自动停
+    expect(store.state.session?.pageIndex).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
+
+    // 重新开始：保留自动模式，回到第一页重新计时
+    expect(store.restartSession()).toBe(true);
+    expect(store.state.session?.pageIndex).toBe(0);
+    expect(store.state.session?.playMode).toBe('auto');
+    expect(store.state.autoRemainingSeconds).toBe(8);
+    expect(vi.getTimerCount()).toBe(1);
+
+    // 回到编辑：会话清除、计时器取消
+    expect(store.exitToEditor()).toBe(true);
+    expect(store.state.session).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+
+    // 组件卸载时重复取消也是安全的
+    store.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('完成后计时器停止，且完成态不允许切换播放模式', () => {
+    const storage = createMemoryStorage();
+    const store = buildStartedStore(storage);
+    store.setPlayMode('auto');
+    vi.advanceTimersByTime(EIGHT_SECONDS); // 自动到达末页并停止
+    expect(store.completeSession()).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(store.setPlayMode('manual')).toBe(false);
+    vi.advanceTimersByTime(30_000);
+    expect(store.state.session?.status).toBe('completed');
   });
 });

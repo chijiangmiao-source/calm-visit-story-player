@@ -34,6 +34,7 @@ function validSnapshot(): Snapshot {
       status: 'presenting',
       startedAt: '2026-09-13T08:00:00.000Z',
       completedAt: null,
+      playMode: 'manual',
     },
   };
 }
@@ -128,6 +129,28 @@ describe('validateSnapshot：整体校验规则', () => {
     missing.session!.status = 'completed';
     missing.session!.completedAt = null;
     expect(validateSnapshot(missing)).toBeNull();
+  });
+
+  it('播放模式：接受 manual / auto，缺少该字段的旧快照按 manual 恢复', () => {
+    const old = validSnapshot();
+    delete (old.session as unknown as Record<string, unknown>).playMode;
+    expect(validateSnapshot(old)).toMatchObject({
+      session: { playMode: 'manual' },
+    });
+
+    const auto = validSnapshot();
+    auto.session!.playMode = 'auto';
+    expect(validateSnapshot(auto)).toMatchObject({ session: { playMode: 'auto' } });
+
+    const nullMode = validSnapshot();
+    (nullMode.session as unknown as Record<string, unknown>).playMode = null;
+    expect(validateSnapshot(nullMode)).toBeNull();
+
+    for (const playMode of ['fast', '', 42]) {
+      const broken = validSnapshot();
+      (broken.session as unknown as Record<string, unknown>).playMode = playMode;
+      expect(validateSnapshot(broken)).toBeNull();
+    }
   });
 
   it('会话损坏时草稿再合法也整体拒绝，不得部分套用', () => {

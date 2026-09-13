@@ -20,6 +20,21 @@ async function createAndStart(page: Page) {
   await expect(page.getByTestId('presenter')).toBeVisible();
 }
 
+/** 录入指定页数的故事并启动演示 */
+async function createPagesAndStart(page: Page, count: number) {
+  await page.goto('/');
+  for (let i = 0; i < count; i += 1) {
+    await page.getByTestId('add-page').click();
+  }
+  const cards = page.getByTestId('page-card');
+  for (let i = 0; i < count; i += 1) {
+    await cards.nth(i).getByTestId('title-input').fill(`第${i + 1}页标题`);
+    await cards.nth(i).getByTestId('desc-input').fill(`第${i + 1}页说明`);
+  }
+  await page.getByTestId('start-presentation').click();
+  await expect(page.getByTestId('presenter')).toBeVisible();
+}
+
 test('刷新后续播：页码、内容与刷新前完全一致', async ({ page }) => {
   await createAndStart(page);
   await expect(page.getByTestId('page-indicator')).toHaveText('第 1 / 2 页');
@@ -181,5 +196,111 @@ test('损坏快照：给出错误反馈，可清除后重新录入', async ({ pa
 
   // 重新录入的路径仍然可用
   await createAndStart(page);
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 1 / 2 页');
+});
+
+test('自动播放：默认手动；开启后每 8 秒连续前进，按钮与方向键仍可干预', async ({ page }) => {
+  await createPagesAndStart(page, 3);
+
+  // 演示开始后默认手动模式，没有开关勾选与倒计时
+  const toggle = page.getByTestId('autoplay-toggle');
+  await expect(toggle).not.toBeChecked();
+  await expect(page.getByTestId('autoplay-countdown')).toBeHidden();
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 1 / 3 页');
+
+  // 原有按钮仍可临时干预（自动未开启时）
+  await page.getByTestId('next-page').click();
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 2 / 3 页');
+
+  // 开启自动播放：从当前页完整八秒倒计时
+  await toggle.check();
+  await expect(page.getByTestId('autoplay-countdown')).toHaveText('8 秒后翻到下一页');
+
+  // 到点连续前进到第三页
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 3 / 3 页', { timeout: 12_000 });
+  await expect(page.getByTestId('page-title')).toHaveText('第3页标题');
+
+  // 末页自动停止：只显示“已到最后一页”，不会自行完成
+  await expect(page.getByTestId('autoplay-countdown')).toHaveText('已到最后一页');
+  await expect(page.getByTestId('completed-screen')).toBeHidden();
+  await expect(page.getByTestId('complete-session')).toBeVisible();
+  await page.waitForTimeout(9_000);
+  await expect(page.getByTestId('completed-screen')).toBeHidden();
+  await expect(page.getByTestId('complete-session')).toBeVisible();
+
+  // 现有“完成”操作仍由照护者手动触发
+  await page.getByTestId('complete-session').click();
+  await expect(page.getByTestId('completed-screen')).toBeVisible();
+});
+
+test('自动播放中手动翻页会从当前页重新计时', async ({ page }) => {
+  await createPagesAndStart(page, 3);
+  await page.getByTestId('autoplay-toggle').check();
+  await expect(page.getByTestId('autoplay-countdown')).toHaveText('8 秒后翻到下一页');
+
+  // 等几秒后手动提前翻页：倒计时重新从 8 秒开始
+  await page.waitForTimeout(3_000);
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 2 / 3 页');
+  await expect(page.getByTestId('autoplay-countdown')).toHaveText('8 秒后翻到下一页');
+
+  // 重置后的完整八秒内不应自动跳走
+  await page.waitForTimeout(7_000);
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 2 / 3 页');
+
+  // 八秒到点后才自动前进
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 3 / 3 页', { timeout: 4_000 });
+});
+
+test('自动播放刷新后续播：模式保留、从完整八秒重新计时，关闭开关后停止', async ({ page }) => {
+  await createPagesAndStart(page, 2);
+  await page.getByTestId('autoplay-toggle').check();
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 1 / 2 页');
+
+  // 数秒后刷新：模式随快照恢复，但计时从完整八秒重新开始
+  await page.waitForTimeout(3_000);
+  await page.reload();
+  await expect(page.getByTestId('presenter')).toBeVisible();
+  await expect(page.getByTestId('autoplay-toggle')).toBeChecked();
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 1 / 2 页');
+  await expect(page.getByTestId('autoplay-countdown')).toHaveText('8 秒后翻到下一页');
+
+  // 刷新后 7 秒内不翻页（证明没有沿用刷新前仅剩的 5 秒）
+  await page.waitForTimeout(7_000);
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 1 / 2 页');
+
+  // 完整八秒后自动翻到末页并停止
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 2 / 2 页', { timeout: 4_000 });
+  await expect(page.getByTestId('autoplay-countdown')).toHaveText('已到最后一页');
+
+  // 再刷新：仍停在末页、自动模式保留、不自行完成
+  await page.reload();
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 2 / 2 页');
+  await expect(page.getByTestId('autoplay-toggle')).toBeChecked();
+  await page.waitForTimeout(9_000);
+  await expect(page.getByTestId('completed-screen')).toBeHidden();
+  await expect(page.getByTestId('complete-session')).toBeVisible();
+
+  // 关闭开关即停止自动播放
+  await page.getByTestId('autoplay-toggle').uncheck();
+  await expect(page.getByTestId('autoplay-countdown')).toBeHidden();
+  await page.waitForTimeout(9_000);
+  await expect(page.getByTestId('completed-screen')).toBeHidden();
+});
+
+test('缺少播放模式字段的旧快照按手动模式恢复，不会自动翻页', async ({ page }) => {
+  await createAndStart(page);
+  // 移除快照中的新字段，模拟旧版本写入的数据
+  await page.evaluate((key) => {
+    const raw = JSON.parse(localStorage.getItem(key)!);
+    delete raw.session.playMode;
+    localStorage.setItem(key, JSON.stringify(raw));
+  }, STORAGE_KEY);
+
+  await page.reload();
+  await expect(page.getByTestId('presenter')).toBeVisible();
+  await expect(page.getByTestId('autoplay-toggle')).not.toBeChecked();
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 1 / 2 页');
+  await page.waitForTimeout(9_000);
   await expect(page.getByTestId('page-indicator')).toHaveText('第 1 / 2 页');
 });

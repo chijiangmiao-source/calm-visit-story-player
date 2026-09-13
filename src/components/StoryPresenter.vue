@@ -17,6 +17,7 @@ const isLastPage = computed(() => {
   const s = session.value;
   return s !== null && s.pageIndex === s.pages.length - 1;
 });
+const isAutoPlaying = computed(() => session.value?.playMode === 'auto');
 const savedTime = computed(() =>
   store.state.savedAt ? formatTime(store.state.savedAt) : '',
 );
@@ -32,7 +33,11 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 onMounted(() => window.addEventListener('keydown', onKeydown));
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown);
+  // 组件卸载（回到编辑等）必须取消旧计时器，避免卸载后重复推进
+  store.dispose();
+});
 </script>
 
 <template>
@@ -69,6 +74,26 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
       <h2 data-testid="page-title" :style="{ color: theme.accent }">{{ currentPage.title }}</h2>
       <p class="presenter__desc" data-testid="page-description">{{ currentPage.description }}</p>
 
+      <label class="autoplay">
+        <input
+          type="checkbox"
+          data-testid="autoplay-toggle"
+          :checked="isAutoPlaying"
+          @change="store.setPlayMode(($event.target as HTMLInputElement).checked ? 'auto' : 'manual')"
+        />
+        <span>自动翻页（每 8 秒）</span>
+        <span
+          v-if="isAutoPlaying && !isLastPage"
+          class="autoplay__countdown"
+          data-testid="autoplay-countdown"
+        >
+          {{ store.state.autoRemainingSeconds }} 秒后翻到下一页
+        </span>
+        <span v-else-if="isAutoPlaying && isLastPage" class="autoplay__countdown" data-testid="autoplay-countdown">
+          已到最后一页
+        </span>
+      </label>
+
       <div class="presenter__actions">
         <button
           type="button"
@@ -92,7 +117,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
         </button>
       </div>
 
-      <p class="presenter__tip">也可以按键盘 ← / → 翻页</p>
+      <p class="presenter__tip">也可以按键盘 ← / → 翻页；手动翻页后自动计时重新开始</p>
 
       <div class="presenter__secondary">
         <button type="button" data-testid="restart-session" @click="store.restartSession()">

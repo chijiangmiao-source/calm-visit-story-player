@@ -15,13 +15,17 @@ export interface StoryDraft {
 
 export type SessionStatus = 'presenting' | 'completed';
 
-/** 一次演示会话：启动时冻结的故事副本 + 当前页码 + 完成状态 */
+/** 播放模式：手动翻页，或按固定八秒节奏自动翻页 */
+export type PlayMode = 'manual' | 'auto';
+
+/** 一次演示会话：启动时冻结的故事副本 + 当前页码 + 完成状态 + 播放模式 */
 export interface PresentationSession {
   pages: StoryPage[];
   pageIndex: number;
   status: SessionStatus;
   startedAt: string;
   completedAt: string | null;
+  playMode: PlayMode;
 }
 
 export interface Snapshot {
@@ -110,7 +114,12 @@ function parseSession(value: unknown): PresentationSession | null | undefined {
   if (!isNonEmptyString(startedAt)) return undefined;
   if (completedAt !== null && !isNonEmptyString(completedAt)) return undefined;
   if (status === 'completed' && completedAt === null) return undefined;
-  return { pages, pageIndex, status, startedAt, completedAt };
+  // 缺少该字段的旧快照按手动模式恢复；字段存在但取值非法则整体判损坏
+  if (value.playMode !== undefined && value.playMode !== 'manual' && value.playMode !== 'auto') {
+    return undefined;
+  }
+  const playMode = value.playMode === 'auto' ? 'auto' : 'manual';
+  return { pages, pageIndex, status, startedAt, completedAt, playMode };
 }
 
 /**

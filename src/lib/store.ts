@@ -6,6 +6,7 @@ import {
   getDefaultStorage,
   loadSnapshot,
   saveSnapshot,
+  type PlayMode,
   type PresentationSession,
   type Snapshot,
   type StorageLike,
@@ -22,6 +23,10 @@ import {
 
 export type ViewName = 'editor' | 'presenter';
 
+/** 自动播放固定节奏：每 8 秒提交下一页（每秒一个计时打点） */
+export const AUTOPLAY_INTERVAL_MS = 1000;
+export const AUTOPLAY_TICKS_PER_PAGE = 8;
+
 export interface StoreState {
   view: ViewName;
   draftPages: StoryPage[];
@@ -30,10 +35,22 @@ export interface StoreState {
   corrupt: boolean;
   saveError: string | null;
   savedAt: string | null;
+  /** 自动播放距下一次翻页剩余秒数（8..1）；非自动播放时为 0 */
+  autoRemainingSeconds: number;
 }
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+/** 只有进行中、自动模式且未到最后一页时，计时器才应该存在 */
+function shouldAutoPlay(session: PresentationSession | null): boolean {
+  return (
+    !!session &&
+    session.status === 'presenting' &&
+    session.playMode === 'auto' &&
+    session.pageIndex < session.pages.length - 1
+  );
 }
 
 export function createStoryStore(storage?: StorageLike) {
@@ -48,7 +65,64 @@ export function createStoryStore(storage?: StorageLike) {
     corrupt: false,
     saveError: null,
     savedAt: null,
+    autoRemainingSeconds: 0,
   });
+
+  // 全场只有一个计时器：任何页面切换 / 模式切换 / 重新开始 / 退出 / 卸载
+  // 都先取消旧计时器，再按需开启新的八秒周期，避免重复推进。
+  let intervalId: ReturnType<typeof setInterval> | null = null;
+  let ticksLeft = 0;
+
+  /** 取消旧计时器并清空倒计时显示 */
+  function clearTimer(): void {
+    if (intervalId !== null) {
+      clearInterval(intervalId);
+      intervalId = null;
+    }
+    ticksLeft = 0;
+    state.autoRemainingSeconds = 0;
+  }
+
+  /** 按当前会话状态对账：该停就停、该开就从完整八秒开始 */
+  function syncTimer(): void {
+    if (intervalId !== null && !shouldAutoPlay(state.session)) {
+      clearTimer();
+    }
+    if (intervalId === null && shouldAutoPlay(state.session)) {
+      ticksLeft = AUTOPLAY_TICKS_PER_PAGE;
+      state.autoRemainingSeconds = AUTOPLAY_TICKS_PER_PAGE;
+      intervalId = setInterval(tick, AUTOPLAY_INTERVAL_MS);
+    }
+  }
+
+  /** 从当前页重新计时：先取消旧周期，再按当前模式开启完整八秒 */
+  function resetTimer(): void {
+    clearTimer();
+    syncTimer();
+  }
+
+  /** 计时器到点：成功翻页由 goToPage 开启新周期；写入失败则停在原页并关闭自动播放 */
+  function tick(): void {
+    const session = state.session;
+    if (!session || !shouldAutoPlay(session)) {
+      clearTimer();
+      return;
+    }
+    ticksLeft -= 1;
+    if (ticksLeft > 0) {
+      state.autoRemainingSeconds = ticksLeft;
+      return;
+    }
+    const ok = goToPage(session.pageIndex + 1);
+    if (!ok) {
+      // 定时翻页写入失败：画面停在原页（commitNext 已保证状态不变），
+      // 内存态切回手动关闭自动播放，存储错误提示继续显示，不做额外写入。
+      clearTimer();
+      if (state.session && state.session.playMode === 'auto') {
+        state.session = { ...state.session, playMode: 'manual' };
+      }
+    }
+  }
 
   // 启动恢复：只接受整体合法的快照；损坏则进入错误态，不部分套用、不覆盖
   const loaded = loadSnapshot(target);
@@ -58,6 +132,8 @@ export function createStoryStore(storage?: StorageLike) {
     state.draftPages = loaded.snapshot.draft?.pages ?? [];
     state.session = loaded.snapshot.session;
     state.view = loaded.snapshot.session ? 'presenter' : 'editor';
+    // 刷新恢复自动播放：从当前页的完整八秒重新计时，不沿用刷新前的剩余时间
+    syncTimer();
   }
 
   /**
@@ -129,6 +205,7 @@ export function createStoryStore(storage?: StorageLike) {
 
   // ---- 演示会话 ----
 
+  /** 启动演示：默认手动模式，不开启计时 */
   function startPresentation(): boolean {
     if (!canStartPresentation(state.draftPages)) return false;
     const session: PresentationSession = {
@@ -137,8 +214,11 @@ export function createStoryStore(storage?: StorageLike) {
       status: 'presenting',
       startedAt: new Date().toISOString(),
       completedAt: null,
+      playMode: 'manual',
     };
-    return commitNext({ draftPages: state.draftPages, session, view: 'presenter' });
+    const ok = commitNext({ draftPages: state.draftPages, session, view: 'presenter' });
+    if (ok) resetTimer();
+    return ok;
   }
 
   function goToPage(index: number): boolean {
@@ -146,10 +226,15 @@ export function createStoryStore(storage?: StorageLike) {
     if (!session || session.status !== 'presenting') return false;
     const clamped = Math.min(Math.max(index, 0), session.pages.length - 1);
     if (clamped === session.pageIndex) return false;
-    return commitNext({
+    const ok = commitNext({
       draftPages: state.draftPages,
       session: { ...session, pageIndex: clamped },
     });
+    if (!ok) return false;
+    // 手动前后翻页（以及自动到点后的翻页）都从新页面重新计时：
+    // 取消旧计时器，避免旧周期继续推进。
+    resetTimer();
+    return true;
   }
 
   function nextPage(): boolean {
@@ -160,12 +245,26 @@ export function createStoryStore(storage?: StorageLike) {
     return state.session ? goToPage(state.session.pageIndex - 1) : false;
   }
 
+  /** 切换手动 / 自动播放：模式随快照保存；开启后从当前页计完整八秒 */
+  function setPlayMode(mode: PlayMode): boolean {
+    const session = state.session;
+    if (!session || session.status !== 'presenting') return false;
+    if (session.playMode === mode) return true; // 幂等，重复切换不产生写入
+    const ok = commitNext({
+      draftPages: state.draftPages,
+      session: { ...session, playMode: mode },
+    });
+    if (!ok) return false;
+    resetTimer();
+    return true;
+  }
+
   function completeSession(): boolean {
     const session = state.session;
     if (!session || session.status !== 'presenting') return false;
     // 只有翻到最后一页才允许标记完成，否则继续播放
     if (session.pageIndex !== session.pages.length - 1) return false;
-    return commitNext({
+    const ok = commitNext({
       draftPages: state.draftPages,
       session: {
         ...session,
@@ -173,13 +272,15 @@ export function createStoryStore(storage?: StorageLike) {
         completedAt: new Date().toISOString(),
       },
     });
+    if (ok) clearTimer(); // 完成后不再自动推进，等待“重新开始 / 回到编辑”
+    return ok;
   }
 
-  /** 重新开始：回到第一页并覆盖旧进度（含完成状态） */
+  /** 重新开始：回到第一页并覆盖旧进度（含完成状态）；播放模式保留并重新计时 */
   function restartSession(): boolean {
     const session = state.session;
     if (!session) return false;
-    return commitNext({
+    const ok = commitNext({
       draftPages: state.draftPages,
       session: {
         ...session,
@@ -189,11 +290,20 @@ export function createStoryStore(storage?: StorageLike) {
         completedAt: null,
       },
     });
+    if (ok) resetTimer();
+    return ok;
   }
 
-  /** 结束演示回到编辑：草稿保留，会话清除 */
+  /** 结束演示回到编辑：草稿保留，会话清除，计时器取消 */
   function exitToEditor(): boolean {
-    return commitNext({ draftPages: state.draftPages, session: null, view: 'editor' });
+    const ok = commitNext({ draftPages: state.draftPages, session: null, view: 'editor' });
+    if (ok) clearTimer();
+    return ok;
+  }
+
+  /** 组件卸载时取消计时器，避免卸载后继续推进 */
+  function dispose(): void {
+    clearTimer();
   }
 
   /** 损坏快照的唯一出口：清除坏数据，回到可重新录入的编辑器 */
@@ -203,6 +313,7 @@ export function createStoryStore(storage?: StorageLike) {
     } catch {
       // 清除失败也继续进入编辑态，后续写入会再次尝试
     }
+    clearTimer();
     state.corrupt = false;
     state.draftPages = [];
     state.session = null;
@@ -226,10 +337,12 @@ export function createStoryStore(storage?: StorageLike) {
     goToPage,
     nextPage,
     prevPage,
+    setPlayMode,
     completeSession,
     restartSession,
     exitToEditor,
     discardCorruptSnapshot,
+    dispose,
   };
 }
 
