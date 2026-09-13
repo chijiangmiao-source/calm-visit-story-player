@@ -1,0 +1,26 @@
+{
+  "name": "story-resume-player",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "逐页故事续播台：纯前端录入 2-12 页故事并支持刷新续播",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test:unit": "vitest run",
+    "test:e2e": "playwright test",
+    "verify": "npm run test:unit && npm run build && npm run test:e2e"
+  },
+  "dependencies": {
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.1",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "~5.7.2",
+    "vite": "^6.0.7",
+    "vitest": "^3.2.7",
+    "vue-tsc": "^2.2.0"
+  }
+}

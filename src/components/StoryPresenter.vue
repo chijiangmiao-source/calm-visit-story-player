@@ -1,0 +1,114 @@
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted } from 'vue';
+import type { StoryStore } from '../lib/store';
+import { formatTime } from '../lib/format';
+import { themeColorById } from '../lib/story';
+
+const props = defineProps<{ store: StoryStore }>();
+const store = props.store;
+
+const session = computed(() => store.state.session);
+const currentPage = computed(() => {
+  const s = session.value;
+  return s ? (s.pages[s.pageIndex] ?? null) : null;
+});
+const theme = computed(() => themeColorById(currentPage.value?.color ?? ''));
+const isLastPage = computed(() => {
+  const s = session.value;
+  return s !== null && s.pageIndex === s.pages.length - 1;
+});
+const savedTime = computed(() =>
+  store.state.savedAt ? formatTime(store.state.savedAt) : '',
+);
+
+function onKeydown(event: KeyboardEvent) {
+  if (event.key === 'ArrowLeft') {
+    event.preventDefault();
+    store.prevPage();
+  } else if (event.key === 'ArrowRight') {
+    event.preventDefault();
+    store.nextPage();
+  }
+}
+
+onMounted(() => window.addEventListener('keydown', onKeydown));
+onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
+</script>
+
+<template>
+  <section
+    v-if="session && session.status === 'completed'"
+    class="presenter presenter--done"
+    data-testid="completed-screen"
+  >
+    <div class="presenter__card">
+      <h2>故事讲完了！</h2>
+      <p>全部 {{ session.pages.length }} 页都看完了，做得很好。</p>
+      <div class="presenter__actions">
+        <button type="button" class="primary" data-testid="restart-session" @click="store.restartSession()">
+          ↺ 重新开始
+        </button>
+        <button type="button" data-testid="exit-to-editor" @click="store.exitToEditor()">
+          回到编辑
+        </button>
+      </div>
+      <p v-if="savedTime" class="saved" data-testid="save-status">已保存到本地 · {{ savedTime }}</p>
+    </div>
+  </section>
+
+  <section
+    v-else-if="session && currentPage"
+    class="presenter"
+    :style="{ backgroundColor: theme.background, color: theme.text }"
+    data-testid="presenter"
+  >
+    <div class="presenter__card">
+      <p class="presenter__indicator" data-testid="page-indicator">
+        第 {{ session.pageIndex + 1 }} / {{ session.pages.length }} 页
+      </p>
+      <h2 data-testid="page-title" :style="{ color: theme.accent }">{{ currentPage.title }}</h2>
+      <p class="presenter__desc" data-testid="page-description">{{ currentPage.description }}</p>
+
+      <div class="presenter__actions">
+        <button
+          type="button"
+          data-testid="prev-page"
+          :disabled="session.pageIndex === 0"
+          @click="store.prevPage()"
+        >
+          ← 上一页
+        </button>
+        <button
+          v-if="isLastPage"
+          type="button"
+          class="primary"
+          data-testid="complete-session"
+          @click="store.completeSession()"
+        >
+          ✓ 完成
+        </button>
+        <button v-else type="button" class="primary" data-testid="next-page" @click="store.nextPage()">
+          下一页 →
+        </button>
+      </div>
+
+      <p class="presenter__tip">也可以按键盘 ← / → 翻页</p>
+
+      <div class="presenter__secondary">
+        <button type="button" data-testid="restart-session" @click="store.restartSession()">
+          ↺ 重新开始
+        </button>
+        <button type="button" data-testid="exit-to-editor" @click="store.exitToEditor()">
+          回到编辑
+        </button>
+      </div>
+
+      <p v-if="store.state.saveError" class="alert" role="alert" data-testid="save-error">
+        {{ store.state.saveError }}
+      </p>
+      <p v-else-if="savedTime" class="saved" data-testid="save-status">
+        已保存到本地 · {{ savedTime }}
+      </p>
+    </div>
+  </section>
+</template>

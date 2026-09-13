@@ -1,0 +1,62 @@
+# 逐页故事续播台
+
+展厅嘈杂或拥挤时，照护者可以用它提前录好“接下来会发生什么”的逐页故事：一次只显示一页，按按钮或键盘 ← / → 翻页。浏览器被误关或刷新后，会从离开的那一页继续，避免孩子因重复和顺序变化而焦虑。
+
+## 功能
+
+- 录入 **2–12 页**故事；每页包含**非空标题**、**非空说明**，并从**六个内置主题色**中选择一色。
+- 启动演示后一次只显示一页，可用界面按钮或键盘左右方向键前后移动，最后一页可标记“完成”。
+- 创建、编辑、启动、翻页、完成、重新开始，每个操作都**先同步写入 localStorage 快照，成功后才更新界面**；写入失败会给出错误提示且界面保持不变。
+- 刷新 / 误关后恢复：页码、内容、完成状态与离开前完全一致。
+- “重新开始”回到第一页并**覆盖**旧进度；“回到编辑”保留草稿、结束会话。
+- 编辑草稿与演示会话相互独立：启动时会冻结一份故事副本，之后改草稿不影响进行中的演示。
+
+## 本地数据范围（重要）
+
+- 所有数据**只保存在当前浏览器的 `localStorage`** 中，键名为 `story-resume:snapshot`。
+- 快照包含 `schemaVersion`（当前为 `1`）、编辑草稿与演示会话（页面副本、当前页码、完成状态）。
+- **不接入任何业务后端或在线服务**，不上传、不分析、不追踪；断网也能正常使用。
+- 数据仅存于本机当前浏览器：换浏览器 / 换设备看不到；清除浏览器站点数据会一并删除。
+- 恢复时只接受**版本正确、页面字段完整、页码在范围内**的整体快照；任何一部分损坏都整体拒绝，绝不部分套用。此时界面会给出错误提示，可一键“清除损坏数据并重新录入”，清除前不会覆盖原有内容。
+- 浏览器禁用本地存储（如某些隐私模式）时，应用仍可运行，但会明确提示“刷新后进度将丢失”。
+
+## 技术栈
+
+TypeScript · Vue 3 · Vite · Vitest（快照规则）· Playwright（刷新续播端到端）
+
+## 本地开发
+
+```bash
+npm install
+npm run dev          # 开发服务器
+npm run test:unit    # Vitest：快照校验与状态仓库规则
+npm run test:e2e     # Playwright：刷新续播 / 完成持久化 / 损坏快照（自动先构建）
+npm run build        # 类型检查 + 产出 dist/
+npm run verify       # 单元测试 + 构建 + 端到端，一次跑完
+```
+
+## Docker
+
+```bash
+# 发布静态页面，默认 8080 端口，可用 WEB_PORT 覆盖
+docker compose up web                 # http://localhost:8080
+WEB_PORT=3000 docker compose up web   # http://localhost:3000
+
+# 一次性验收服务：单元测试 + 构建 + Playwright 端到端，跑完即退出
+docker compose run --rm verify
+# 或
+docker compose up verify --abort-on-container-exit --exit-code-from verify
+```
+
+`web` 服务基于 nginx 托管 `dist/` 静态文件；`verify` 服务在容器内完成全部验收（Vitest → 构建 → Playwright 对 `vite preview` 产物跑端到端），退出码即验收结果。
+
+## 目录结构
+
+```
+src/
+  lib/story.ts       # 页面模型、六个内置主题色、2-12 页规则
+  lib/snapshot.ts    # schemaVersion、整体校验、localStorage 读写
+  lib/store.ts       # 状态仓库：所有变更先写快照再反馈
+  components/        # 编辑器 / 演示器 / 损坏快照提示
+e2e/resume.spec.ts   # Playwright：刷新续播、完成持久化、损坏恢复
+```

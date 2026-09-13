@@ -1,0 +1,19 @@
+services:
+  # 静态页面服务：WEB_PORT 可覆盖，默认 8080
+  #   WEB_PORT=3000 docker compose up web
+  web:
+    build:
+      context: .
+      target: runtime
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    restart: unless-stopped
+
+  # 一次性验收服务：跑完单元测试 + 构建 + Playwright 端到端后退出
+  #   docker compose run --rm verify
+  # 或
+  #   docker compose up verify --abort-on-container-exit --exit-code-from verify
+  verify:
+    build:
+      context: .
+      target: verify

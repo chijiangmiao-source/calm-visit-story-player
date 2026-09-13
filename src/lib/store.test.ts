@@ -1,0 +1,154 @@
+import { describe, expect, it } from 'vitest';
+import { createStoryStore } from './store';
+import {
+  SCHEMA_VERSION,
+  STORAGE_KEY,
+  createMemoryStorage,
+  type Snapshot,
+  type StorageLike,
+} from './snapshot';
+import { THEME_COLORS } from './story';
+
+function readRaw(storage: StorageLike): Snapshot {
+  const raw = storage.getItem(STORAGE_KEY);
+  expect(raw).not.toBeNull();
+  return JSON.parse(raw!) as Snapshot;
+}
+
+/** 录入两页合法故事并启动演示 */
+function buildStartedStore(storage: StorageLike) {
+  const store = createStoryStore(storage);
+  store.addPage();
+  store.addPage();
+  const [p1, p2] = store.state.draftPages;
+  store.updatePage(p1.id, { title: '去地铁站', description: '我们先坐电梯下楼。' });
+  store.updatePage(p2.id, { title: '进站刷卡', description: '闸机会“嘀”一声。' });
+  expect(store.startPresentation()).toBe(true);
+  return store;
+}
+
+describe('store：每次操作先写快照再反馈', () => {
+  it('创建与编辑草稿后立即写入带 schemaVersion 的快照', () => {
+    const storage = createMemoryStorage();
+    const store = createStoryStore(storage);
+    store.addPage();
+    const page = store.state.draftPages[0];
+    store.updatePage(page.id, { title: '标题', description: '说明' });
+
+    const saved = readRaw(storage);
+    expect(saved.schemaVersion).toBe(SCHEMA_VERSION);
+    expect(saved.draft?.pages).toHaveLength(1);
+    expect(saved.draft?.pages[0]).toMatchObject({ title: '标题', description: '说明' });
+    expect(saved.session).toBeNull();
+  });
+
+  it('启动、翻页、完成、重新开始都会同步落盘', () => {
+    const storage = createMemoryStorage();
+    const store = buildStartedStore(storage);
+    expect(readRaw(storage).session).toMatchObject({ pageIndex: 0, status: 'presenting' });
+
+    store.nextPage();
+    expect(readRaw(storage).session).toMatchObject({ pageIndex: 1, status: 'presenting' });
+
+    store.completeSession();
+    const completed = readRaw(storage).session;
+    expect(completed).toMatchObject({ status: 'completed', pageIndex: 1 });
+    expect(completed?.completedAt).toBeTruthy();
+
+    store.restartSession();
+    const restarted = readRaw(storage).session;
+    expect(restarted).toMatchObject({ pageIndex: 0, status: 'presenting', completedAt: null });
+  });
+
+  it('重新开始会覆盖旧进度而不是追加', () => {
+    const storage = createMemoryStorage();
+    const store = buildStartedStore(storage);
+    store.nextPage();
+    store.completeSession();
+    const before = readRaw(storage).session!;
+    store.restartSession();
+    const after = readRaw(storage).session!;
+    expect(after.pageIndex).toBe(0);
+    expect(after.status).toBe('presenting');
+    expect(after.completedAt).toBeNull();
+    expect(JSON.stringify(after)).not.toBe(JSON.stringify(before));
+  });
+
+  it('模拟刷新：新实例从同一存储恢复出相同页码、内容与完成状态', () => {
+    const storage = createMemoryStorage();
+    const store = buildStartedStore(storage);
+    store.nextPage();
+    store.completeSession();
+
+    const revived = createStoryStore(storage);
+    expect(revived.state.view).toBe('presenter');
+    expect(revived.state.session).toEqual(store.state.session);
+    expect(revived.state.session?.status).toBe('completed');
+    expect(revived.state.session?.pages.map((p) => p.title)).toEqual(['去地铁站', '进站刷卡']);
+  });
+
+  it('草稿与演示会话互不影响：编辑草稿不改变进行中的会话内容', () => {
+    const storage = createMemoryStorage();
+    const store = buildStartedStore(storage);
+    const draftId = store.state.draftPages[0].id;
+    store.updatePage(draftId, { title: '改过的标题' });
+    expect(store.state.session?.pages[0].title).toBe('去地铁站');
+    expect(readRaw(storage).session?.pages[0].title).toBe('去地铁站');
+  });
+
+  it('演示中翻页越界会被夹紧且不产生多余写入', () => {
+    const storage = createMemoryStorage();
+    const store = buildStartedStore(storage);
+    expect(store.goToPage(99)).toBe(true);
+    expect(store.state.session?.pageIndex).toBe(1);
+    const savedAt = store.state.savedAt;
+    expect(store.goToPage(99)).toBe(false); // 已在最后一页，不再写入
+    expect(store.state.savedAt).toBe(savedAt);
+    expect(store.prevPage()).toBe(true);
+    expect(store.state.session?.pageIndex).toBe(0);
+  });
+
+  it('写入失败时界面状态不变并给出错误反馈', () => {
+    const failing: StorageLike = {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error('QuotaExceededError');
+      },
+      removeItem: () => {},
+    };
+    const store = createStoryStore(failing);
+    expect(store.addPage()).toBe(false);
+    expect(store.state.draftPages).toHaveLength(0);
+    expect(store.state.saveError).toBeTruthy();
+    expect(store.state.savedAt).toBeNull();
+  });
+
+  it('损坏快照：进入错误态、不部分套用，清除后可重新录入', () => {
+    const storage = createMemoryStorage();
+    storage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ schemaVersion: SCHEMA_VERSION, draft: { pages: [{ title: '' }] }, session: null }),
+    );
+    const store = createStoryStore(storage);
+    expect(store.state.corrupt).toBe(true);
+    expect(store.state.draftPages).toHaveLength(0);
+    // 损坏未清除前拒绝写入
+    expect(store.addPage()).toBe(false);
+
+    store.discardCorruptSnapshot();
+    expect(store.state.corrupt).toBe(false);
+    expect(storage.getItem(STORAGE_KEY)).toBeNull();
+    expect(store.addPage()).toBe(true);
+    expect(store.state.draftPages).toHaveLength(1);
+  });
+
+  it('拒绝非法主题色与不足两页的启动', () => {
+    const storage = createMemoryStorage();
+    const store = createStoryStore(storage);
+    store.addPage();
+    const page = store.state.draftPages[0];
+    expect(store.updatePage(page.id, { color: 'not-a-color' })).toBe(false);
+    expect(store.state.draftPages[0].color).toBe(THEME_COLORS[0].id);
+    expect(store.startPresentation()).toBe(false); // 只有一页
+  });
+});
