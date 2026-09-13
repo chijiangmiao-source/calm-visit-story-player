@@ -60,3 +60,24 @@ export function canStartPresentation(pages: StoryPage[]): boolean {
     pages.every(isPageReady)
   );
 }
+
+export type MoveDirection = 'up' | 'down';
+
+/**
+ * 按页面标识与移动方向计算新的不可变数组（与相邻页交换）。
+ * 页面不存在或目标位置超出边界时返回 null，调用方不得提交。
+ * 不修改、也不返回原数组。
+ */
+export function movePage(
+  pages: readonly StoryPage[],
+  id: string,
+  direction: MoveDirection,
+): StoryPage[] | null {
+  const index = pages.findIndex((p) => p.id === id);
+  if (index === -1) return null;
+  const targetIndex = direction === 'up' ? index - 1 : index + 1;
+  if (targetIndex < 0 || targetIndex >= pages.length) return null;
+  const next = [...pages];
+  [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
+  return next;
+}

@@ -106,6 +106,61 @@ test('草稿未填完时刷新不判损坏，可继续编辑', async ({ page }) 
   await expect(page.getByTestId('page-indicator')).toHaveText('第 1 / 2 页');
 });
 
+test('上移调整叙事次序：编辑器顺序、演示播放顺序与刷新恢复一致', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('add-page').click();
+  await page.getByTestId('add-page').click();
+  await page.getByTestId('add-page').click();
+
+  const cards = page.getByTestId('page-card');
+  const titles = ['第一站', '第二站', '第三站'];
+  for (let i = 0; i < 3; i += 1) {
+    await cards.nth(i).getByTestId('title-input').fill(titles[i]);
+    await cards.nth(i).getByTestId('desc-input').fill(`${titles[i]}的说明`);
+  }
+
+  // 边界按钮：首项“上移”、末项“下移”禁用
+  await expect(cards.nth(0).getByTestId('move-up')).toBeDisabled();
+  await expect(cards.nth(2).getByTestId('move-down')).toBeDisabled();
+  await expect(cards.nth(0).getByTestId('move-down')).toBeEnabled();
+  await expect(cards.nth(2).getByTestId('move-up')).toBeEnabled();
+
+  // 第三页连续上移到首位：[1,2,3] → [1,3,2] → [3,1,2]
+  await cards.nth(2).getByTestId('move-up').click();
+  await cards.nth(1).getByTestId('move-up').click();
+
+  const reordered = ['第三站', '第一站', '第二站'];
+  for (let i = 0; i < 3; i += 1) {
+    await expect(cards.nth(i).getByTestId('title-input')).toHaveValue(reordered[i]);
+    await expect(cards.nth(i).locator('strong')).toHaveText(`第 ${i + 1} 页`);
+  }
+  // 新的首项上移禁用、原首项（现第二页）上移恢复可用
+  await expect(cards.nth(0).getByTestId('move-up')).toBeDisabled();
+  await expect(cards.nth(1).getByTestId('move-up')).toBeEnabled();
+
+  // 刷新编辑页：顺序仍由现有快照按数组原序恢复，无需迁移
+  await page.reload();
+  const restoredCards = page.getByTestId('page-card');
+  for (let i = 0; i < 3; i += 1) {
+    await expect(restoredCards.nth(i).getByTestId('title-input')).toHaveValue(reordered[i]);
+  }
+
+  // 启动演示冻结调整后的次序，逐页播放顺序一致
+  await page.getByTestId('start-presentation').click();
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 1 / 3 页');
+  await expect(page.getByTestId('page-title')).toHaveText('第三站');
+  await page.getByTestId('next-page').click();
+  await expect(page.getByTestId('page-title')).toHaveText('第一站');
+  await page.getByTestId('next-page').click();
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 3 / 3 页');
+  await expect(page.getByTestId('page-title')).toHaveText('第二站');
+
+  // 演示中刷新，仍停在调整后次序的第三页
+  await page.reload();
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 3 / 3 页');
+  await expect(page.getByTestId('page-title')).toHaveText('第二站');
+});
+
 test('损坏快照：给出错误反馈，可清除后重新录入', async ({ page }) => {
   await page.goto('/');
   await page.evaluate(

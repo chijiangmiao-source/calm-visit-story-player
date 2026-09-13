@@ -89,8 +89,15 @@ button.primary {
   gap: 0.75rem;
 }
 
-.page-card__head button {
+.page-card__actions {
   margin-left: auto;
+  display: inline-flex;
+  gap: 0.4rem;
+}
+
+.page-card__reorder-btn {
+  font-size: 0.85rem;
+  padding: 0.35rem 0.6rem;
 }
 
 .page-card__warn {

@@ -14,7 +14,9 @@ import {
   canStartPresentation,
   createPage,
   isThemeColorId,
+  movePage,
   MAX_PAGES,
+  type MoveDirection,
   type StoryPage,
 } from './story';
 
@@ -112,6 +114,15 @@ export function createStoryStore(storage?: StorageLike) {
     });
   }
 
+  /** 调整草稿叙事次序：仅在没有进行中的会话且目标位置有效时提交新数组 */
+  function moveDraftPage(id: string, direction: MoveDirection): boolean {
+    // 启动演示会冻结当前草稿副本，已启动的会话不接受重排
+    if (state.session) return false;
+    const next = movePage(state.draftPages, id, direction);
+    if (!next) return false; // 页面不存在或已到边界：不提交、状态不变
+    return commitNext({ draftPages: next, session: null });
+  }
+
   // ---- 演示会话 ----
 
   function startPresentation(): boolean {
@@ -204,6 +215,7 @@ export function createStoryStore(storage?: StorageLike) {
     addPage,
     removePage,
     updatePage,
+    moveDraftPage,
     startPresentation,
     goToPage,
     nextPage,

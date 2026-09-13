@@ -173,4 +173,101 @@ describe('store：每次操作先写快照再反馈', () => {
     expect(store.state.draftPages[0].color).toBe(THEME_COLORS[0].id);
     expect(store.startPresentation()).toBe(false); // 只有一页
   });
+
+  it('上移/下移：先落盘再重排，页面对象与字段保持完整', () => {
+    const storage = createMemoryStorage();
+    const store = createStoryStore(storage);
+    store.addPage();
+    store.addPage();
+    store.addPage();
+    const [p1, p2, p3] = store.state.draftPages;
+    store.updatePage(p1.id, { title: '第一页', description: '说明一' });
+    store.updatePage(p2.id, { title: '第二页', description: '说明二' });
+    store.updatePage(p3.id, { title: '第三页', description: '说明三' });
+
+    // 第三页连续上移到首位：[p1,p2,p3] → [p1,p3,p2] → [p3,p1,p2]
+    expect(store.moveDraftPage(p3.id, 'up')).toBe(true);
+    expect(store.state.draftPages.map((p) => p.id)).toEqual([p1.id, p3.id, p2.id]);
+    expect(readRaw(storage).draft?.pages.map((p) => p.id)).toEqual([p1.id, p3.id, p2.id]);
+    expect(store.moveDraftPage(p3.id, 'up')).toBe(true);
+    expect(store.state.draftPages.map((p) => p.id)).toEqual([p3.id, p1.id, p2.id]);
+    expect(readRaw(storage).draft?.pages.map((p) => p.id)).toEqual([p3.id, p1.id, p2.id]);
+    // 已到首位，继续上移被拒绝且不再写入
+    expect(store.moveDraftPage(p3.id, 'up')).toBe(false);
+    expect(readRaw(storage).draft?.pages.map((p) => p.id)).toEqual([p3.id, p1.id, p2.id]);
+
+    // 首项下移回到原位，再一路下移到末位，继续下移被拒绝
+    expect(store.moveDraftPage(p3.id, 'down')).toBe(true);
+    expect(store.state.draftPages.map((p) => p.id)).toEqual([p1.id, p3.id, p2.id]);
+    expect(store.moveDraftPage(p3.id, 'down')).toBe(true);
+    expect(store.state.draftPages.map((p) => p.id)).toEqual([p1.id, p2.id, p3.id]);
+    expect(store.moveDraftPage(p3.id, 'down')).toBe(false); // 已在末位
+
+    // 字段内容随页面一起移动、没有丢失
+    const last = store.state.draftPages[2];
+    expect(last.id).toBe(p3.id);
+    expect(last).toMatchObject({ title: '第三页', description: '说明三' });
+  });
+
+  it('移动到边界之外：页面内容、顺序与保存状态均不发生变化', () => {
+    const storage = createMemoryStorage();
+    const store = createStoryStore(storage);
+    store.addPage();
+    store.addPage();
+    const [p1, p2] = store.state.draftPages;
+    store.updatePage(p1.id, { title: '标题一', description: '说明一' });
+    store.updatePage(p2.id, { title: '标题二', description: '说明二' });
+    const savedAt = store.state.savedAt;
+    const savedRaw = storage.getItem(STORAGE_KEY);
+
+    expect(store.moveDraftPage(p1.id, 'up')).toBe(false); // 首项上移
+    expect(store.moveDraftPage(p2.id, 'down')).toBe(false); // 末项下移
+    expect(store.moveDraftPage('不存在的id', 'up')).toBe(false);
+
+    expect(store.state.draftPages.map((p) => p.id)).toEqual([p1.id, p2.id]);
+    expect(store.state.draftPages[0].title).toBe('标题一');
+    expect(store.state.draftPages[1].title).toBe('标题二');
+    expect(store.state.savedAt).toBe(savedAt);
+    expect(storage.getItem(STORAGE_KEY)).toBe(savedRaw);
+  });
+
+  it('已启动的会话不接受重排；冻结副本的顺序保持启动时的草稿次序', () => {
+    const storage = createMemoryStorage();
+    const store = buildStartedStore(storage);
+    const [p1, p2] = store.state.draftPages;
+    const sessionSnapshot = JSON.parse(JSON.stringify(store.state.session));
+
+    // 演示中尝试重排：会话与草稿都不变，不产生写入
+    const savedAt = store.state.savedAt;
+    expect(store.moveDraftPage(p2.id, 'up')).toBe(false);
+    expect(store.state.draftPages.map((p) => p.id)).toEqual([p1.id, p2.id]);
+    expect(store.state.session).toEqual(sessionSnapshot);
+    expect(store.state.savedAt).toBe(savedAt);
+
+    // 回到编辑后可以重新排序；再次启动时冻结的副本按新顺序播放
+    expect(store.exitToEditor()).toBe(true);
+    expect(store.moveDraftPage(p2.id, 'up')).toBe(true);
+    expect(store.state.draftPages.map((p) => p.id)).toEqual([p2.id, p1.id]);
+    expect(store.startPresentation()).toBe(true);
+    expect(store.state.session?.pages.map((p) => p.title)).toEqual(['进站刷卡', '去地铁站']);
+  });
+
+  it('调整顺序后模拟刷新：新实例按数组原序恢复草稿', () => {
+    const storage = createMemoryStorage();
+    const store = createStoryStore(storage);
+    store.addPage();
+    store.addPage();
+    store.addPage();
+    const [p1, p2, p3] = store.state.draftPages;
+    store.updatePage(p1.id, { title: '第一页', description: '说明一' });
+    store.updatePage(p2.id, { title: '第二页', description: '说明二' });
+    store.updatePage(p3.id, { title: '第三页', description: '说明三' });
+    store.moveDraftPage(p3.id, 'up');
+    store.moveDraftPage(p3.id, 'up');
+    expect(store.state.draftPages.map((p) => p.title)).toEqual(['第三页', '第一页', '第二页']);
+
+    const revived = createStoryStore(storage);
+    expect(revived.state.view).toBe('editor');
+    expect(revived.state.draftPages.map((p) => p.title)).toEqual(['第三页', '第一页', '第二页']);
+  });
 });

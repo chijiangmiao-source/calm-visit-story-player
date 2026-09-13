@@ -57,9 +57,31 @@ function onTextInput(id: string, field: 'title' | 'description', event: Event) {
         <div class="page-card__head">
           <strong>第 {{ index + 1 }} 页</strong>
           <span v-if="!isPageReady(page)" class="page-card__warn">标题与说明不能为空</span>
-          <button type="button" data-testid="remove-page" @click="store.removePage(page.id)">
-            删除本页
-          </button>
+          <span class="page-card__actions">
+            <button
+              type="button"
+              class="page-card__reorder-btn"
+              data-testid="move-up"
+              :disabled="index === 0"
+              :title="index === 0 ? '这已经是第一页' : '把本页向前移动一位'"
+              @click="store.moveDraftPage(page.id, 'up')"
+            >
+              ↑ 上移
+            </button>
+            <button
+              type="button"
+              class="page-card__reorder-btn"
+              data-testid="move-down"
+              :disabled="index === store.state.draftPages.length - 1"
+              :title="index === store.state.draftPages.length - 1 ? '这已经是最后一页' : '把本页向后移动一位'"
+              @click="store.moveDraftPage(page.id, 'down')"
+            >
+              ↓ 下移
+            </button>
+            <button type="button" data-testid="remove-page" @click="store.removePage(page.id)">
+              删除本页
+            </button>
+          </span>
         </div>
 
         <label class="field">
