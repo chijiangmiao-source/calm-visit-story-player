@@ -174,6 +174,68 @@ describe('store：每次操作先写快照再反馈', () => {
     expect(store.startPresentation()).toBe(false); // 只有一页
   });
 
+  it('删除不存在的页面：拒绝操作，内容、保存时间与快照完全不变', () => {
+    const storage = createMemoryStorage();
+    const store = createStoryStore(storage);
+    store.addPage();
+    store.addPage();
+    const [p1, p2] = store.state.draftPages;
+    store.updatePage(p1.id, { title: '标题一', description: '说明一' });
+    store.updatePage(p2.id, { title: '标题二', description: '说明二' });
+    const savedAt = store.state.savedAt;
+    const savedRaw = storage.getItem(STORAGE_KEY);
+
+    expect(store.removePage('不存在的id')).toBe(false);
+
+    expect(store.state.draftPages.map((p) => p.id)).toEqual([p1.id, p2.id]);
+    expect(store.state.draftPages[0].title).toBe('标题一');
+    expect(store.state.draftPages[1].title).toBe('标题二');
+    expect(store.state.savedAt).toBe(savedAt);
+    expect(storage.getItem(STORAGE_KEY)).toBe(savedRaw);
+  });
+
+  it('更新不存在的页面：拒绝操作，不产生写入与保存时间刷新', () => {
+    const storage = createMemoryStorage();
+    const store = createStoryStore(storage);
+    store.addPage();
+    store.addPage();
+    const [p1, p2] = store.state.draftPages;
+    store.updatePage(p1.id, { title: '标题一', description: '说明一' });
+    store.updatePage(p2.id, { title: '标题二', description: '说明二' });
+    const savedAt = store.state.savedAt;
+    const savedRaw = storage.getItem(STORAGE_KEY);
+
+    expect(store.updatePage('不存在的id', { title: '新标题' })).toBe(false);
+    expect(store.updatePage('不存在的id', { color: 'mint' })).toBe(false);
+
+    expect(store.state.draftPages.map((p) => p.id)).toEqual([p1.id, p2.id]);
+    expect(store.state.draftPages[0].title).toBe('标题一');
+    expect(store.state.draftPages[1].title).toBe('标题二');
+    expect(store.state.savedAt).toBe(savedAt);
+    expect(storage.getItem(STORAGE_KEY)).toBe(savedRaw);
+  });
+
+  it('未到最后一页时触发完成：拒绝并继续播放，到末页后才可完成', () => {
+    const storage = createMemoryStorage();
+    const store = buildStartedStore(storage);
+    // 两页故事，刚在第一页开始播放
+    expect(store.state.session?.pageIndex).toBe(0);
+    const savedAt = store.state.savedAt;
+    const savedRaw = storage.getItem(STORAGE_KEY);
+
+    expect(store.completeSession()).toBe(false);
+    expect(store.state.session?.status).toBe('presenting');
+    expect(store.state.session?.pageIndex).toBe(0);
+    expect(store.state.session?.completedAt).toBeNull();
+    expect(store.state.savedAt).toBe(savedAt);
+    expect(storage.getItem(STORAGE_KEY)).toBe(savedRaw);
+
+    // 翻到最后一页后可以正常完成并落盘
+    expect(store.nextPage()).toBe(true);
+    expect(store.completeSession()).toBe(true);
+    expect(readRaw(storage).session).toMatchObject({ status: 'completed', pageIndex: 1 });
+  });
+
   it('上移/下移：先落盘再重排，页面对象与字段保持完整', () => {
     const storage = createMemoryStorage();
     const store = createStoryStore(storage);

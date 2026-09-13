@@ -100,6 +100,8 @@ export function createStoryStore(storage?: StorageLike) {
   }
 
   function removePage(id: string): boolean {
+    // 页面不存在：不提交、状态完全不变
+    if (!state.draftPages.some((p) => p.id === id)) return false;
     return commitNext({
       draftPages: state.draftPages.filter((p) => p.id !== id),
       session: state.session,
@@ -108,6 +110,8 @@ export function createStoryStore(storage?: StorageLike) {
 
   function updatePage(id: string, patch: Partial<Omit<StoryPage, 'id'>>): boolean {
     if (patch.color !== undefined && !isThemeColorId(patch.color)) return false;
+    // 页面不存在：拒绝操作，不产生写入
+    if (!state.draftPages.some((p) => p.id === id)) return false;
     return commitNext({
       draftPages: state.draftPages.map((p) => (p.id === id ? { ...p, ...patch } : p)),
       session: state.session,
@@ -159,6 +163,8 @@ export function createStoryStore(storage?: StorageLike) {
   function completeSession(): boolean {
     const session = state.session;
     if (!session || session.status !== 'presenting') return false;
+    // 只有翻到最后一页才允许标记完成，否则继续播放
+    if (session.pageIndex !== session.pages.length - 1) return false;
     return commitNext({
       draftPages: state.draftPages,
       session: {
