@@ -1,4 +1,4 @@
-import { isThemeColorId, MAX_PAGES, MIN_PAGES, type StoryPage } from './story';
+import { isPageReady, isThemeColorId, MAX_PAGES, MIN_PAGES, type StoryPage } from './story';
 
 /**
  * 快照结构版本。任何不兼容的结构变更都必须递增此版本，
@@ -49,12 +49,16 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
-/** 页面字段必须完整：非空标题、非空说明、六个内置主题色之一 */
+/**
+ * 结构校验：字段必须存在且类型正确。
+ * 标题与说明允许为空字符串——草稿可能录入到一半，
+ * 是否可演示由 isPageReady / 会话级校验把关。
+ */
 function parsePage(value: unknown): StoryPage | undefined {
   if (!isRecord(value)) return undefined;
   if (!isNonEmptyString(value.id)) return undefined;
-  if (!isNonEmptyString(value.title)) return undefined;
-  if (!isNonEmptyString(value.description)) return undefined;
+  if (typeof value.title !== 'string') return undefined;
+  if (typeof value.description !== 'string') return undefined;
   if (!isThemeColorId(value.color)) return undefined;
   return {
     id: value.id,
@@ -64,13 +68,19 @@ function parsePage(value: unknown): StoryPage | undefined {
   };
 }
 
-function parsePages(value: unknown, min: number): StoryPage[] | undefined {
+function parsePages(
+  value: unknown,
+  min: number,
+  options: { requireReady: boolean },
+): StoryPage[] | undefined {
   if (!Array.isArray(value)) return undefined;
   if (value.length < min || value.length > MAX_PAGES) return undefined;
   const pages: StoryPage[] = [];
   for (const item of value) {
     const page = parsePage(item);
     if (!page) return undefined;
+    // 演示会话中的页面必须字段完整（非空标题与说明）
+    if (options.requireReady && !isPageReady(page)) return undefined;
     pages.push(page);
   }
   return pages;
@@ -80,7 +90,8 @@ function parsePages(value: unknown, min: number): StoryPage[] | undefined {
 function parseDraft(value: unknown): StoryDraft | null | undefined {
   if (value === null) return null;
   if (!isRecord(value)) return undefined;
-  const pages = parsePages(value.pages, 0);
+  // 草稿允许未填完的页面，刷新后应能继续编辑
+  const pages = parsePages(value.pages, 0, { requireReady: false });
   if (!pages) return undefined;
   return { pages };
 }
@@ -89,7 +100,7 @@ function parseDraft(value: unknown): StoryDraft | null | undefined {
 function parseSession(value: unknown): PresentationSession | null | undefined {
   if (value === null) return null;
   if (!isRecord(value)) return undefined;
-  const pages = parsePages(value.pages, MIN_PAGES);
+  const pages = parsePages(value.pages, MIN_PAGES, { requireReady: true });
   if (!pages) return undefined;
   const { pageIndex, status, startedAt, completedAt } = value;
   // 索引必须落在页面范围内

@@ -138,8 +138,29 @@ describe('validateSnapshot：整体校验规则', () => {
 
   it('草稿损坏时会话再合法也整体拒绝，不得部分套用', () => {
     const snapshot = validSnapshot();
-    snapshot.draft = { pages: [makePage({ title: '' })] };
+    snapshot.draft = { pages: [makePage({ color: 'not-a-color' })] };
     expect(validateSnapshot(snapshot)).toBeNull();
+  });
+
+  it('草稿允许未填完的页面（空标题/空说明），刷新后可继续编辑', () => {
+    const snapshot = validSnapshot();
+    snapshot.draft = {
+      pages: [makePage({ title: '', description: '' }), makePage({ title: '写了一半', description: '' })],
+    };
+    expect(validateSnapshot(snapshot)).toEqual(snapshot);
+  });
+
+  it('草稿页字段缺失或类型错误仍属损坏', () => {
+    for (const broken of [
+      makePage({ title: undefined }),
+      makePage({ description: 42 }),
+      makePage({ id: '' }),
+      makePage({ color: '#ff00ff' }),
+    ]) {
+      const snapshot = validSnapshot();
+      snapshot.draft = { pages: [broken] };
+      expect(validateSnapshot(snapshot)).toBeNull();
+    }
   });
 });
 

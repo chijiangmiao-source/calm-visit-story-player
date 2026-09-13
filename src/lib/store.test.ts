@@ -142,6 +142,28 @@ describe('store：每次操作先写快照再反馈', () => {
     expect(store.state.draftPages).toHaveLength(1);
   });
 
+  it('未填完或暂时清空的草稿页面，刷新后仍可继续编辑（不判损坏）', () => {
+    const storage = createMemoryStorage();
+    const store = createStoryStore(storage);
+    store.addPage();
+    store.addPage();
+    const [p1, p2] = store.state.draftPages;
+    store.updatePage(p1.id, { title: '只写了一半', description: '先存着' });
+    store.updatePage(p2.id, { title: '又清空了', description: '想想再写' });
+    store.updatePage(p2.id, { title: '', description: '' }); // 暂时清空
+
+    // 模拟刷新：从同一存储恢复
+    const revived = createStoryStore(storage);
+    expect(revived.state.corrupt).toBe(false);
+    expect(revived.state.view).toBe('editor');
+    expect(revived.state.draftPages).toHaveLength(2);
+    expect(revived.state.draftPages[0].title).toBe('只写了一半');
+    expect(revived.state.draftPages[1].title).toBe('');
+    // 恢复后可以继续编辑并正常落盘
+    expect(revived.updatePage(revived.state.draftPages[1].id, { title: '补上了' })).toBe(true);
+    expect(readRaw(storage).draft?.pages[1].title).toBe('补上了');
+  });
+
   it('拒绝非法主题色与不足两页的启动', () => {
     const storage = createMemoryStorage();
     const store = createStoryStore(storage);
