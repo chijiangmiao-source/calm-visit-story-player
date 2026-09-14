@@ -67,7 +67,11 @@ function onKeydown(event: KeyboardEvent) {
   }
 }
 
-onMounted(() => window.addEventListener('keydown', onKeydown));
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown);
+  // 从其他入口（如现场选择板）切回时，自动播放需从完整八秒重新对账计时
+  store.syncAutoTimer();
+});
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown);
   // 组件卸载（回到编辑等）必须取消旧计时器，避免卸载后重复推进

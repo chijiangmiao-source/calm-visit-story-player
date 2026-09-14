@@ -629,6 +629,25 @@ describe('store：自动播放（可控时钟）', () => {
     vi.advanceTimersByTime(30_000);
     expect(store.state.session?.status).toBe('completed');
   });
+
+  it('切到其他入口卸载演示器后重新挂载：自动播放从完整八秒重新对账计时', () => {
+    const storage = createMemoryStorage();
+    const store = buildStartedStoreWithPages(storage, 3);
+    store.setPlayMode('auto');
+    vi.advanceTimersByTime(5_000); // 剩 3 秒时离开演示页：组件卸载取消计时器
+    expect(store.state.autoRemainingSeconds).toBe(3);
+    store.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+
+    // 重新挂载（不刷新页面，会话仍是自动模式）：从完整八秒重新计时
+    store.syncAutoTimer();
+    expect(store.state.autoRemainingSeconds).toBe(8);
+    expect(vi.getTimerCount()).toBe(1);
+    vi.advanceTimersByTime(7_999);
+    expect(store.state.session?.pageIndex).toBe(0);
+    vi.advanceTimersByTime(1);
+    expect(store.state.session?.pageIndex).toBe(1);
+  });
 });
 
 describe('store：页码导航直接跳转', () => {

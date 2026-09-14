@@ -24,6 +24,10 @@ function onTextInput(id: string, field: 'title' | 'description', event: Event) {
         为即将到达的环境提前录制 {{ MIN_PAGES }}–{{ MAX_PAGES }} 页故事；演示时一次只显示一页，
         刷新或误关浏览器后会从离开的那一页继续。
       </p>
+      <p class="editor__choice-entry">
+        临时改道或孩子情绪紧张？
+        <a href="#choice" data-testid="choice-entry">打开现场选择板 →</a>
+      </p>
     </header>
 
     <p v-if="!store.persistenceAvailable" class="alert" role="alert">

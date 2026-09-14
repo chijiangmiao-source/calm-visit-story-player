@@ -305,3 +305,187 @@ button.primary {
   border: 1px solid #d84315;
   border-radius: 12px;
 }
+
+/* ---- 编辑器旁的现场选择板入口 ---- */
+.editor__choice-entry {
+  margin-top: 0.75rem;
+  padding: 0.6rem 0.9rem;
+  background: #e3f2fd;
+  border-radius: 8px;
+  font-size: 0.95rem;
+}
+
+.editor__choice-entry a {
+  color: #1565c0;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.editor__choice-entry a:hover {
+  text-decoration: underline;
+}
+
+/* ---- 现场选择板 ---- */
+.choice {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 4rem;
+}
+
+.choice__back {
+  color: #1565c0;
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.choice__back:hover {
+  text-decoration: underline;
+}
+
+.choice__header h1 {
+  margin-bottom: 0.25rem;
+}
+
+.choice__stage {
+  background: #fff;
+  border: 1px solid #d9e2ec;
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin: 1.25rem 0;
+  text-align: center;
+}
+
+.choice__empty {
+  color: #52606d;
+}
+
+.choice__meta {
+  margin: 0;
+  color: #7b8794;
+  font-size: 0.85rem;
+}
+
+.choice__status {
+  display: inline-block;
+  margin: 0.5rem 0 0.75rem;
+  padding: 0.25rem 0.8rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.choice__status--pending {
+  background: #fff8e1;
+  color: #8d6400;
+}
+
+.choice__status--done {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.choice__prompt {
+  margin: 0 0 1.25rem;
+  font-size: 1.4rem;
+}
+
+.choice__options {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.choice__option {
+  font-size: 1.15rem;
+  font-weight: 600;
+  padding: 1rem;
+  border: 2px solid #1565c0;
+  border-radius: 12px;
+  background: #fff;
+  color: #0d3c61;
+  min-height: 3.5rem;
+}
+
+.choice__option:hover:not(:disabled) {
+  background: #e3f2fd;
+}
+
+.choice__option--chosen {
+  background: #2e7d32;
+  border-color: #2e7d32;
+  color: #fff;
+}
+
+.choice__result {
+  margin-top: 1.25rem;
+  font-size: 1.1rem;
+  color: #2e7d32;
+}
+
+.choice__option-error {
+  margin-top: 1rem;
+  text-align: left;
+}
+
+.choice__form {
+  background: #fff;
+  border: 1px solid #d9e2ec;
+  border-radius: 12px;
+  padding: 1.5rem;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.choice__form h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.choice__option-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.choice__option-row input[type='text'] {
+  flex: 1;
+  font: inherit;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #9aa5b1;
+  border-radius: 8px;
+}
+
+.choice__remove {
+  font-size: 0.85rem;
+  padding: 0.35rem 0.75rem;
+}
+
+.choice__field-error {
+  margin: 0;
+  color: #d84315;
+  font-size: 0.85rem;
+}
+
+.choice__form-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+/* ---- 选择板损坏数据 ---- */
+.choice-error {
+  max-width: 560px;
+  margin: 15vh auto 0;
+  padding: 2rem;
+  background: #fff;
+  border: 1px solid #d84315;
+  border-radius: 12px;
+}
+
+.choice-error a {
+  color: #1565c0;
+  text-decoration: none;
+}
+
+.choice-error a:hover {
+  text-decoration: underline;
+}

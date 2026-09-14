@@ -319,6 +319,11 @@ export function createStoryStore(storage?: StorageLike) {
     clearTimer();
   }
 
+  /** 组件（重新）挂载时对账：自动播放中的会话从完整八秒重新计时 */
+  function syncAutoTimer(): void {
+    syncTimer();
+  }
+
   /** 损坏快照的唯一出口：清除坏数据，回到可重新录入的编辑器 */
   function discardCorruptSnapshot(): void {
     try {
@@ -357,6 +362,7 @@ export function createStoryStore(storage?: StorageLike) {
     exitToEditor,
     discardCorruptSnapshot,
     dispose,
+    syncAutoTimer,
   };
 }
 
