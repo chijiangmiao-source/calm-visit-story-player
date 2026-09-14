@@ -304,3 +304,75 @@ test('缺少播放模式字段的旧快照按手动模式恢复，不会自动�
   await page.waitForTimeout(9_000);
   await expect(page.getByTestId('page-indicator')).toHaveText('第 1 / 2 页');
 });
+
+test('页码导航：从第二页直跳首尾页，刷新停在最后选择；写入失败保持原页可重试', async ({ page }) => {
+  await createPagesAndStart(page, 3);
+  await page.getByTestId('next-page').click();
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 2 / 3 页');
+
+  const navToggle = page.getByTestId('page-nav-toggle');
+  const navItems = page.getByTestId('page-nav-item');
+
+  // 展开导航：按页码与标题列出冻结副本
+  await navToggle.click();
+  await expect(page.getByTestId('page-nav')).toBeVisible();
+  await expect(navItems).toHaveCount(3);
+  await expect(navItems.nth(0)).toContainText('第 1 页');
+  await expect(navItems.nth(0)).toContainText('第1页标题');
+  await expect(navItems.nth(2)).toContainText('第 3 页');
+  await expect(navItems.nth(2)).toContainText('第3页标题');
+
+  // 从第二页直接跳到第一页：回到单页画面，导航收起
+  await navItems.nth(0).click();
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 1 / 3 页');
+  await expect(page.getByTestId('page-title')).toHaveText('第1页标题');
+  await expect(page.getByTestId('page-nav')).toBeHidden();
+
+  // 后续按钮与方向键都从该页继续
+  await page.getByTestId('next-page').click();
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 2 / 3 页');
+  await page.keyboard.press('ArrowLeft');
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 1 / 3 页');
+
+  // 再直接跳到最后一页
+  await navToggle.click();
+  await navItems.nth(2).click();
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 3 / 3 页');
+  await expect(page.getByTestId('page-title')).toHaveText('第3页标题');
+
+  // 刷新后停在最后一次成功选择的位置
+  await page.reload();
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 3 / 3 页');
+  await expect(page.getByTestId('page-title')).toHaveText('第3页标题');
+
+  // 存储写入失败：导航保持打开、标出未能跳转，当前页维持原状
+  await page.evaluate(() => {
+    (window as unknown as { __origSetItem: typeof Storage.prototype.setItem }).__origSetItem =
+      Storage.prototype.setItem;
+    Storage.prototype.setItem = () => {
+      throw new DOMException('QuotaExceededError');
+    };
+  });
+  await navToggle.click();
+  await navItems.nth(0).click();
+  await expect(page.getByTestId('page-nav')).toBeVisible(); // 导航保持打开
+  await expect(page.getByTestId('page-nav-failed')).toBeVisible(); // 标出未能跳转
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 3 / 3 页'); // 停留原页
+  await expect(page.getByTestId('save-error')).toBeVisible(); // 现有存储错误提示
+
+  // 存储恢复后可直接重试：跳转成功、导航收起、错误提示消除
+  await page.evaluate(() => {
+    Storage.prototype.setItem = (
+      window as unknown as { __origSetItem: typeof Storage.prototype.setItem }
+    ).__origSetItem;
+  });
+  await navItems.nth(0).click();
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 1 / 3 页');
+  await expect(page.getByTestId('page-nav')).toBeHidden();
+  await expect(page.getByTestId('save-error')).toBeHidden();
+
+  // 重试成功后的位置同样持久化
+  await page.reload();
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 1 / 3 页');
+  await expect(page.getByTestId('page-title')).toHaveText('第1页标题');
+});

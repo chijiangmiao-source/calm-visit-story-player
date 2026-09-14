@@ -240,6 +240,62 @@ button.primary {
   padding: 0.35rem 0.75rem;
 }
 
+/* ---- 页码导航 ---- */
+.pagenav {
+  margin-top: 0.25rem;
+}
+
+.pagenav__toggle {
+  font-size: 0.85rem;
+  padding: 0.35rem 0.75rem;
+}
+
+.pagenav__list {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+  max-height: 40vh;
+  overflow-y: auto;
+  text-align: left;
+}
+
+.pagenav__item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+}
+
+.pagenav__no {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pagenav__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pagenav__item--current {
+  border-color: #1565c0;
+  background: #e3f2fd;
+}
+
+.pagenav__item--failed {
+  border-color: #d84315;
+}
+
+.pagenav__failed-note {
+  margin: 0.25rem 0 0;
+  color: #d84315;
+  font-size: 0.85rem;
+}
+
 /* ---- 损坏快照 ---- */
 .snapshot-error {
   max-width: 560px;

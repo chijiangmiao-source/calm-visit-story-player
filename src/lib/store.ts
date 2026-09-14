@@ -237,6 +237,19 @@ export function createStoryStore(storage?: StorageLike) {
     return true;
   }
 
+  /**
+   * 页码导航直接跳转：目标索引必须落在页面范围内。
+   * 越界或非法索引不提交、不改变会话与计时器；选择当前页幂等成功、不产生写入；
+   * 有效跳转沿用现有翻页提交链路，写入成功后从该页重新计时。
+   */
+  function jumpToPage(index: number): boolean {
+    const session = state.session;
+    if (!session || session.status !== 'presenting') return false;
+    if (!Number.isInteger(index) || index < 0 || index >= session.pages.length) return false;
+    if (index === session.pageIndex) return true; // 已在该页：无需写入
+    return goToPage(index);
+  }
+
   function nextPage(): boolean {
     return state.session ? goToPage(state.session.pageIndex + 1) : false;
   }
@@ -335,6 +348,7 @@ export function createStoryStore(storage?: StorageLike) {
     moveDraftPage,
     startPresentation,
     goToPage,
+    jumpToPage,
     nextPage,
     prevPage,
     setPlayMode,

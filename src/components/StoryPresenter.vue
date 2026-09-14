@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import type { StoryStore } from '../lib/store';
 import { formatTime } from '../lib/format';
 import { themeColorById } from '../lib/story';
@@ -21,6 +21,30 @@ const isAutoPlaying = computed(() => session.value?.playMode === 'auto');
 const savedTime = computed(() =>
   store.state.savedAt ? formatTime(store.state.savedAt) : '',
 );
+
+// 页码导航：展开后列出冻结副本的页码与标题，可从中直接选页
+const navOpen = ref(false);
+/** 最近一次写入失败、未能跳转到的页索引；用于在导航中标出 */
+const navFailedIndex = ref<number | null>(null);
+
+function toggleNav() {
+  navOpen.value = !navOpen.value;
+  // 关闭导航时清除失败标记，下次打开从干净状态开始
+  if (!navOpen.value) navFailedIndex.value = null;
+}
+
+/**
+ * 选页沿用 store 的翻页提交链路：只有目标索引有效且快照写入成功才回到单页画面；
+ * 写入失败时导航保持打开并标出未能跳转的页，当前页与倒计时维持原状，可重试或关闭。
+ */
+function selectPage(index: number) {
+  if (store.jumpToPage(index)) {
+    navOpen.value = false;
+    navFailedIndex.value = null;
+  } else {
+    navFailedIndex.value = index;
+  }
+}
 
 function onKeydown(event: KeyboardEvent) {
   if (event.key === 'ArrowLeft') {
@@ -71,6 +95,45 @@ onBeforeUnmount(() => {
       <p class="presenter__indicator" data-testid="page-indicator">
         第 {{ session.pageIndex + 1 }} / {{ session.pages.length }} 页
       </p>
+
+      <div class="pagenav">
+        <button
+          type="button"
+          class="pagenav__toggle"
+          data-testid="page-nav-toggle"
+          :aria-expanded="navOpen"
+          @click="toggleNav"
+        >
+          {{ navOpen ? '▴ 收起页码导航' : '▾ 选择页面' }}
+        </button>
+        <ol v-if="navOpen" class="pagenav__list" data-testid="page-nav">
+          <li v-for="(page, index) in session.pages" :key="page.id">
+            <button
+              type="button"
+              class="pagenav__item"
+              :class="{
+                'pagenav__item--current': index === session.pageIndex,
+                'pagenav__item--failed': index === navFailedIndex,
+              }"
+              :aria-current="index === session.pageIndex ? 'page' : undefined"
+              data-testid="page-nav-item"
+              @click="selectPage(index)"
+            >
+              <span class="pagenav__no">第 {{ index + 1 }} 页</span>
+              <span class="pagenav__title">{{ page.title }}</span>
+            </button>
+            <p
+              v-if="index === navFailedIndex"
+              class="pagenav__failed-note"
+              role="alert"
+              data-testid="page-nav-failed"
+            >
+              未能跳转到该页，请重试或关闭导航
+            </p>
+          </li>
+        </ol>
+      </div>
+
       <h2 data-testid="page-title" :style="{ color: theme.accent }">{{ currentPage.title }}</h2>
       <p class="presenter__desc" data-testid="page-description">{{ currentPage.description }}</p>
 

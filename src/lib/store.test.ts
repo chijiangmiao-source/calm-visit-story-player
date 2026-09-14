@@ -551,3 +551,141 @@ describe('store：自动播放（可控时钟）', () => {
     expect(store.state.session?.status).toBe('completed');
   });
 });
+
+describe('store：页码导航直接跳转', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('有效跳转一次到位并落盘；自动模式下从目标页重新计完整八秒', () => {
+    const storage = createMemoryStorage();
+    const store = buildStartedStoreWithPages(storage, 3);
+    store.setPlayMode('auto');
+    vi.advanceTimersByTime(5_000); // 已走 5 秒，剩 3 秒
+    expect(store.state.autoRemainingSeconds).toBe(3);
+
+    // 向前跳到中间页：倒计时从完整八秒重新开始
+    expect(store.jumpToPage(1)).toBe(true);
+    expect(store.state.session?.pageIndex).toBe(1);
+    expect(readRaw(storage).session?.pageIndex).toBe(1);
+    expect(store.state.autoRemainingSeconds).toBe(8);
+    expect(vi.getTimerCount()).toBe(1);
+    vi.advanceTimersByTime(7_999);
+    expect(store.state.session?.pageIndex).toBe(1); // 旧周期没有继续推进
+    vi.advanceTimersByTime(1);
+    expect(store.state.session?.pageIndex).toBe(2);
+
+    // 向后跳回第一页同样重新计时
+    expect(store.jumpToPage(0)).toBe(true);
+    expect(store.state.session?.pageIndex).toBe(0);
+    expect(store.state.autoRemainingSeconds).toBe(8);
+    expect(vi.getTimerCount()).toBe(1);
+
+    // 直接跳到最后一页：与翻页到末页一致，自动推进停止
+    expect(store.jumpToPage(2)).toBe(true);
+    expect(store.state.session?.pageIndex).toBe(2);
+    expect(store.state.autoRemainingSeconds).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(store.state.session?.status).toBe('presenting'); // 不自行完成
+  });
+
+  it('手动模式下跳转不产生计时器，快照同步更新', () => {
+    const storage = createMemoryStorage();
+    const store = buildStartedStoreWithPages(storage, 3);
+    expect(store.jumpToPage(2)).toBe(true);
+    expect(store.state.session?.pageIndex).toBe(2);
+    expect(readRaw(storage).session?.pageIndex).toBe(2);
+    expect(store.state.autoRemainingSeconds).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+
+    expect(store.jumpToPage(0)).toBe(true);
+    expect(readRaw(storage).session?.pageIndex).toBe(0);
+  });
+
+  it('越界与非法索引：会话、快照、保存时间与计时器完全不变', () => {
+    const storage = createMemoryStorage();
+    const store = buildStartedStoreWithPages(storage, 3);
+    store.setPlayMode('auto');
+    vi.advanceTimersByTime(5_000); // 剩 3 秒
+    expect(store.state.autoRemainingSeconds).toBe(3);
+    const savedAt = store.state.savedAt;
+    const savedRaw = storage.getItem(STORAGE_KEY);
+
+    expect(store.jumpToPage(-1)).toBe(false);
+    expect(store.jumpToPage(3)).toBe(false);
+    expect(store.jumpToPage(99)).toBe(false);
+    expect(store.jumpToPage(1.5)).toBe(false);
+
+    expect(store.state.session?.pageIndex).toBe(0);
+    expect(store.state.savedAt).toBe(savedAt);
+    expect(storage.getItem(STORAGE_KEY)).toBe(savedRaw);
+    expect(store.state.autoRemainingSeconds).toBe(3); // 倒计时未被重置
+    expect(vi.getTimerCount()).toBe(1);
+
+    // 原周期不受干扰：剩余 3 秒走完照常自动翻页
+    vi.advanceTimersByTime(3_000);
+    expect(store.state.session?.pageIndex).toBe(1);
+  });
+
+  it('选择当前页：幂等成功但不产生写入、不重置计时', () => {
+    const storage = createMemoryStorage();
+    const store = buildStartedStoreWithPages(storage, 3);
+    store.setPlayMode('auto');
+    vi.advanceTimersByTime(5_000);
+    const savedAt = store.state.savedAt;
+    const savedRaw = storage.getItem(STORAGE_KEY);
+
+    expect(store.jumpToPage(0)).toBe(true);
+    expect(store.state.session?.pageIndex).toBe(0);
+    expect(store.state.savedAt).toBe(savedAt);
+    expect(storage.getItem(STORAGE_KEY)).toBe(savedRaw);
+    expect(store.state.autoRemainingSeconds).toBe(3);
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
+  it('写入失败：停留原页、倒计时与自动模式维持原状，存储恢复后可重试成功', () => {
+    const memory = createMemoryStorage();
+    let failWrites = false;
+    const flaky: StorageLike = {
+      getItem: (key) => memory.getItem(key),
+      setItem: (key, value) => {
+        if (failWrites) throw new Error('QuotaExceededError');
+        memory.setItem(key, value);
+      },
+      removeItem: (key) => memory.removeItem(key),
+    };
+    const store = buildStartedStoreWithPages(flaky, 3);
+    store.setPlayMode('auto');
+    vi.advanceTimersByTime(5_000); // 剩 3 秒
+    expect(store.state.autoRemainingSeconds).toBe(3);
+
+    failWrites = true;
+    expect(store.jumpToPage(2)).toBe(false);
+    expect(store.state.session?.pageIndex).toBe(0); // 画面停在原页
+    expect(store.state.autoRemainingSeconds).toBe(3); // 倒计时维持原状
+    expect(store.state.session?.playMode).toBe('auto'); // 不关闭自动播放
+    expect(vi.getTimerCount()).toBe(1); // 原周期继续
+    expect(store.state.saveError).toBeTruthy(); // 沿用现有存储错误提示
+
+    // 存储恢复后重试同一目标：跳转成功并从完整八秒重新计时
+    failWrites = false;
+    expect(store.jumpToPage(2)).toBe(true);
+    expect(store.state.session?.pageIndex).toBe(2);
+    expect(store.state.saveError).toBeNull();
+    expect(readRaw(memory).session?.pageIndex).toBe(2);
+    expect(store.state.autoRemainingSeconds).toBe(0); // 末页停止
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('完成态不接受跳转', () => {
+    const storage = createMemoryStorage();
+    const store = buildStartedStoreWithPages(storage, 3);
+    expect(store.jumpToPage(2)).toBe(true);
+    expect(store.completeSession()).toBe(true);
+    const savedRaw = storage.getItem(STORAGE_KEY);
+
+    expect(store.jumpToPage(0)).toBe(false);
+    expect(store.state.session?.status).toBe('completed');
+    expect(store.state.session?.pageIndex).toBe(2);
+    expect(storage.getItem(STORAGE_KEY)).toBe(savedRaw);
+  });
+});
