@@ -35,6 +35,25 @@ async function createPagesAndStart(page: Page, count: number) {
   await expect(page.getByTestId('presenter')).toBeVisible();
 }
 
+/** 模拟本地存储写入失败（如配额不足），原实现保存起来便于恢复 */
+async function simulateStorageFailure(page: Page) {
+  await page.evaluate(() => {
+    const w = window as unknown as { __origSetItem?: typeof Storage.prototype.setItem };
+    w.__origSetItem = w.__origSetItem ?? Storage.prototype.setItem;
+    Storage.prototype.setItem = () => {
+      throw new DOMException('QuotaExceededError');
+    };
+  });
+}
+
+/** 恢复本地存储的正常写入 */
+async function restoreStorage(page: Page) {
+  await page.evaluate(() => {
+    const w = window as unknown as { __origSetItem?: typeof Storage.prototype.setItem };
+    if (w.__origSetItem) Storage.prototype.setItem = w.__origSetItem;
+  });
+}
+
 test('刷新后续播：页码、内容与刷新前完全一致', async ({ page }) => {
   await createAndStart(page);
   await expect(page.getByTestId('page-indicator')).toHaveText('第 1 / 2 页');
@@ -375,4 +394,102 @@ test('页码导航：从第二页直跳首尾页，刷新停在最后选择；�
   await page.reload();
   await expect(page.getByTestId('page-indicator')).toHaveText('第 1 / 3 页');
   await expect(page.getByTestId('page-title')).toHaveText('第1页标题');
+});
+
+test('勾选自动翻页时写入失败：开关保持关闭并提示保存失败，恢复后可重试', async ({ page }) => {
+  await createPagesAndStart(page, 3);
+  const toggle = page.getByTestId('autoplay-toggle');
+  await expect(toggle).not.toBeChecked();
+
+  await simulateStorageFailure(page);
+  await toggle.click(); // 提交失败，开启不应生效
+
+  // 开关保持关闭、不出现倒计时，并明确提示保存失败
+  await expect(toggle).not.toBeChecked();
+  await expect(page.getByTestId('autoplay-countdown')).toBeHidden();
+  await expect(page.getByTestId('save-error')).toBeVisible();
+  // 快照中的播放模式仍是手动，未被部分修改
+  const snapshot = await page.evaluate(
+    (key) => JSON.parse(localStorage.getItem(key)!),
+    STORAGE_KEY,
+  );
+  expect(snapshot.session.playMode).toBe('manual');
+
+  // 存储恢复后重新勾选：开关生效并开始倒计时，错误提示消除
+  await restoreStorage(page);
+  await toggle.check();
+  await expect(toggle).toBeChecked();
+  await expect(page.getByTestId('autoplay-countdown')).toHaveText('8 秒后翻到下一页');
+  await expect(page.getByTestId('save-error')).toBeHidden();
+});
+
+test('倒计时中关闭开关写入失败：开关保持开启并继续倒计时翻页', async ({ page }) => {
+  await createPagesAndStart(page, 3);
+  const toggle = page.getByTestId('autoplay-toggle');
+  await toggle.check();
+  await expect(page.getByTestId('autoplay-countdown')).toHaveText('8 秒后翻到下一页');
+
+  await simulateStorageFailure(page);
+  await toggle.click(); // 提交失败，关闭不应生效
+
+  // 开关保持开启、倒计时继续，并明确提示保存失败
+  await expect(toggle).toBeChecked();
+  await expect(page.getByTestId('autoplay-countdown')).toBeVisible();
+  await expect(page.getByTestId('save-error')).toBeVisible();
+  const snapshot = await page.evaluate(
+    (key) => JSON.parse(localStorage.getItem(key)!),
+    STORAGE_KEY,
+  );
+  expect(snapshot.session.playMode).toBe('auto');
+
+  // 存储恢复：原倒计时到点照常自动翻页（证明计时没有被取消）
+  await restoreStorage(page);
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 2 / 3 页', { timeout: 10_000 });
+});
+
+test('完成页重新开始写入失败：停留完成页并明确提示未保存，恢复后可重试', async ({ page }) => {
+  await createAndStart(page);
+  await page.getByTestId('next-page').click();
+  await page.getByTestId('complete-session').click();
+  await expect(page.getByTestId('completed-screen')).toBeVisible();
+
+  await simulateStorageFailure(page);
+  await page.getByTestId('restart-session').click();
+
+  // 仍停在完成页，并明确提示本次操作未保存
+  await expect(page.getByTestId('completed-screen')).toBeVisible();
+  await expect(page.getByTestId('save-error')).toBeVisible();
+  const snapshot = await page.evaluate(
+    (key) => JSON.parse(localStorage.getItem(key)!),
+    STORAGE_KEY,
+  );
+  expect(snapshot.session.status).toBe('completed');
+
+  // 存储恢复后重试：成功回到第一页，错误提示消除
+  await restoreStorage(page);
+  await page.getByTestId('restart-session').click();
+  await expect(page.getByTestId('page-indicator')).toHaveText('第 1 / 2 页');
+  await expect(page.getByTestId('save-error')).toBeHidden();
+});
+
+test('“已完成但页码仍在中间”的矛盾快照：整体拒绝并给出损坏提示', async ({ page }) => {
+  await createPagesAndStart(page, 3);
+  // 篡改快照：标记完成但页码仍在第一页，前后矛盾
+  await page.evaluate((key) => {
+    const raw = JSON.parse(localStorage.getItem(key)!);
+    raw.session.status = 'completed';
+    raw.session.completedAt = new Date().toISOString();
+    localStorage.setItem(key, JSON.stringify(raw));
+  }, STORAGE_KEY);
+  await page.reload();
+
+  // 不显示“全部看完”，而是整体拒绝并给出可操作的错误反馈
+  await expect(page.getByTestId('snapshot-error')).toBeVisible();
+  await expect(page.getByTestId('completed-screen')).toBeHidden();
+  await expect(page.getByTestId('presenter')).toBeHidden();
+
+  // 清除矛盾数据后可重新录入
+  await page.getByTestId('clear-corrupt').click();
+  await expect(page.getByTestId('snapshot-error')).toBeHidden();
+  await expect(page.getByTestId('add-page')).toBeVisible();
 });

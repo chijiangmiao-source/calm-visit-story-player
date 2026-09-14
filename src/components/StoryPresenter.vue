@@ -46,6 +46,17 @@ function selectPage(index: number) {
   }
 }
 
+/**
+ * 切换自动翻页：沿用“先写快照后更新”链路，只有提交成功才改变模式。
+ * 复选框是单向 :checked 绑定，提交失败时状态没有变化、Vue 不会回写 DOM，
+ * 必须手动把开关拨回真实状态，避免“看似已开却没有倒计时”（或反向）的脱节。
+ */
+function onAutoplayToggle(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const ok = store.setPlayMode(input.checked ? 'auto' : 'manual');
+  if (!ok) input.checked = isAutoPlaying.value;
+}
+
 function onKeydown(event: KeyboardEvent) {
   if (event.key === 'ArrowLeft') {
     event.preventDefault();
@@ -81,7 +92,10 @@ onBeforeUnmount(() => {
           回到编辑
         </button>
       </div>
-      <p v-if="savedTime" class="saved" data-testid="save-status">已保存到本地 · {{ savedTime }}</p>
+      <p v-if="store.state.saveError" class="alert" role="alert" data-testid="save-error">
+        {{ store.state.saveError }}
+      </p>
+      <p v-else-if="savedTime" class="saved" data-testid="save-status">已保存到本地 · {{ savedTime }}</p>
     </div>
   </section>
 
@@ -142,7 +156,7 @@ onBeforeUnmount(() => {
           type="checkbox"
           data-testid="autoplay-toggle"
           :checked="isAutoPlaying"
-          @change="store.setPlayMode(($event.target as HTMLInputElement).checked ? 'auto' : 'manual')"
+          @change="onAutoplayToggle"
         />
         <span>自动翻页（每 8 秒）</span>
         <span

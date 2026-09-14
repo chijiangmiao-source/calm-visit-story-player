@@ -122,13 +122,33 @@ describe('validateSnapshot：整体校验规则', () => {
   it('完成状态必须带完成时间', () => {
     const ok = validSnapshot();
     ok.session!.status = 'completed';
+    ok.session!.pageIndex = ok.session!.pages.length - 1;
     ok.session!.completedAt = '2026-09-13T09:00:00.000Z';
     expect(validateSnapshot(ok)).not.toBeNull();
 
     const missing = validSnapshot();
     missing.session!.status = 'completed';
+    missing.session!.pageIndex = missing.session!.pages.length - 1;
     missing.session!.completedAt = null;
     expect(validateSnapshot(missing)).toBeNull();
+  });
+
+  it('拒绝“已完成但页码仍在中间”的前后矛盾会话', () => {
+    // 三页会话：完成状态只可能出现在最后一页（索引 2）
+    for (const pageIndex of [0, 1]) {
+      const snapshot = validSnapshot();
+      snapshot.session!.status = 'completed';
+      snapshot.session!.completedAt = '2026-09-13T09:00:00.000Z';
+      snapshot.session!.pageIndex = pageIndex;
+      expect(validateSnapshot(snapshot)).toBeNull();
+    }
+
+    // 完成状态且停在最后一页：自洽，接受
+    const consistent = validSnapshot();
+    consistent.session!.status = 'completed';
+    consistent.session!.completedAt = '2026-09-13T09:00:00.000Z';
+    consistent.session!.pageIndex = 2;
+    expect(validateSnapshot(consistent)).not.toBeNull();
   });
 
   it('播放模式：接受 manual / auto，缺少该字段的旧快照按 manual 恢复', () => {

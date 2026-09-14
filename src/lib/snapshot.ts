@@ -114,6 +114,9 @@ function parseSession(value: unknown): PresentationSession | null | undefined {
   if (!isNonEmptyString(startedAt)) return undefined;
   if (completedAt !== null && !isNonEmptyString(completedAt)) return undefined;
   if (status === 'completed' && completedAt === null) return undefined;
+  // 完成状态与页码必须自洽：只有翻到最后一页才可能完成，
+  // “已完成但页码仍在中间”属于前后矛盾的数据，整体拒绝
+  if (status === 'completed' && pageIndex !== pages.length - 1) return undefined;
   // 缺少该字段的旧快照按手动模式恢复；字段存在但取值非法则整体判损坏
   if (value.playMode !== undefined && value.playMode !== 'manual' && value.playMode !== 'auto') {
     return undefined;

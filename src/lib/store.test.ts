@@ -142,6 +142,23 @@ describe('store：每次操作先写快照再反馈', () => {
     expect(store.state.draftPages).toHaveLength(1);
   });
 
+  it('“已完成但页码仍在中间”的矛盾快照：整体拒绝，不显示完成页', () => {
+    const storage = createMemoryStorage();
+    buildStartedStore(storage); // 两页故事，停在第 1 页、进行中
+    // 篡改快照：标记完成但页码仍在第一页，前后矛盾
+    const raw = JSON.parse(storage.getItem(STORAGE_KEY)!);
+    raw.session.status = 'completed';
+    raw.session.completedAt = '2026-09-14T09:00:00.000Z';
+    storage.setItem(STORAGE_KEY, JSON.stringify(raw));
+
+    const revived = createStoryStore(storage);
+    expect(revived.state.corrupt).toBe(true);
+    expect(revived.state.session).toBeNull();
+    expect(revived.state.view).toBe('editor');
+    // 矛盾数据被清除前拒绝任何写入，不覆盖原内容
+    expect(revived.addPage()).toBe(false);
+  });
+
   it('未填完或暂时清空的草稿页面，刷新后仍可继续编辑（不判损坏）', () => {
     const storage = createMemoryStorage();
     const store = createStoryStore(storage);
@@ -484,6 +501,68 @@ describe('store：自动播放（可控时钟）', () => {
     expect(vi.getTimerCount()).toBe(0);
     vi.advanceTimersByTime(30_000);
     expect(revived.state.session?.pageIndex).toBe(0);
+  });
+
+  it('开启自动播放写入失败：保持手动模式、不启动计时并给出错误反馈', () => {
+    const memory = createMemoryStorage();
+    let failWrites = false;
+    const flaky: StorageLike = {
+      getItem: (key) => memory.getItem(key),
+      setItem: (key, value) => {
+        if (failWrites) throw new Error('QuotaExceededError');
+        memory.setItem(key, value);
+      },
+      removeItem: (key) => memory.removeItem(key),
+    };
+    const store = buildStartedStoreWithPages(flaky, 3);
+    expect(store.state.session?.playMode).toBe('manual');
+
+    failWrites = true;
+    expect(store.setPlayMode('auto')).toBe(false);
+    expect(store.state.session?.playMode).toBe('manual'); // 模式保持关闭
+    expect(store.state.autoRemainingSeconds).toBe(0); // 没有倒计时
+    expect(vi.getTimerCount()).toBe(0);
+    expect(store.state.saveError).toBeTruthy(); // 保存失败反馈
+    expect(readRaw(memory).session?.playMode).toBe('manual'); // 快照未被改动
+
+    // 存储恢复后重试：正常开启并计时
+    failWrites = false;
+    expect(store.setPlayMode('auto')).toBe(true);
+    expect(store.state.session?.playMode).toBe('auto');
+    expect(store.state.saveError).toBeNull();
+    expect(store.state.autoRemainingSeconds).toBe(8);
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
+  it('倒计时中关闭开关写入失败：保持自动模式、原倒计时继续推进', () => {
+    const memory = createMemoryStorage();
+    let failWrites = false;
+    const flaky: StorageLike = {
+      getItem: (key) => memory.getItem(key),
+      setItem: (key, value) => {
+        if (failWrites) throw new Error('QuotaExceededError');
+        memory.setItem(key, value);
+      },
+      removeItem: (key) => memory.removeItem(key),
+    };
+    const store = buildStartedStoreWithPages(flaky, 3);
+    store.setPlayMode('auto');
+    vi.advanceTimersByTime(5_000); // 已走 5 秒，剩 3 秒
+    expect(store.state.autoRemainingSeconds).toBe(3);
+
+    failWrites = true;
+    expect(store.setPlayMode('manual')).toBe(false);
+    expect(store.state.session?.playMode).toBe('auto'); // 模式保持开启
+    expect(store.state.autoRemainingSeconds).toBe(3); // 倒计时不被重置
+    expect(vi.getTimerCount()).toBe(1); // 原周期继续
+    expect(store.state.saveError).toBeTruthy();
+    expect(readRaw(memory).session?.playMode).toBe('auto'); // 快照未被改动
+
+    // 存储恢复后，原倒计时到点照常自动翻页
+    failWrites = false;
+    vi.advanceTimersByTime(3_000);
+    expect(store.state.session?.pageIndex).toBe(1);
+    expect(readRaw(memory).session?.pageIndex).toBe(1);
   });
 
   it('定时翻页写入失败：停在原页、关闭自动播放并继续显示存储错误', () => {
